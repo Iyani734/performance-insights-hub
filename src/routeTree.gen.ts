@@ -13,6 +13,7 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedUploadsRouteImport } from './routes/_authenticated/uploads'
+import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
 import { Route as AuthenticatedOpenJobsRouteImport } from './routes/_authenticated/open-jobs'
 import { Route as AuthenticatedHistoryRouteImport } from './routes/_authenticated/history'
 import { Route as AuthenticatedEmailsRouteImport } from './routes/_authenticated/emails'
@@ -36,6 +37,11 @@ const IndexRoute = IndexRouteImport.update({
 const AuthenticatedUploadsRoute = AuthenticatedUploadsRouteImport.update({
   id: '/uploads',
   path: '/uploads',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedSettingsRoute = AuthenticatedSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedOpenJobsRoute = AuthenticatedOpenJobsRouteImport.update({
@@ -72,6 +78,7 @@ export interface FileRoutesByFullPath {
   '/emails': typeof AuthenticatedEmailsRoute
   '/history': typeof AuthenticatedHistoryRoute
   '/open-jobs': typeof AuthenticatedOpenJobsRoute
+  '/settings': typeof AuthenticatedSettingsRoute
   '/uploads': typeof AuthenticatedUploadsRoute
 }
 export interface FileRoutesByTo {
@@ -82,6 +89,7 @@ export interface FileRoutesByTo {
   '/emails': typeof AuthenticatedEmailsRoute
   '/history': typeof AuthenticatedHistoryRoute
   '/open-jobs': typeof AuthenticatedOpenJobsRoute
+  '/settings': typeof AuthenticatedSettingsRoute
   '/uploads': typeof AuthenticatedUploadsRoute
 }
 export interface FileRoutesById {
@@ -94,6 +102,7 @@ export interface FileRoutesById {
   '/_authenticated/emails': typeof AuthenticatedEmailsRoute
   '/_authenticated/history': typeof AuthenticatedHistoryRoute
   '/_authenticated/open-jobs': typeof AuthenticatedOpenJobsRoute
+  '/_authenticated/settings': typeof AuthenticatedSettingsRoute
   '/_authenticated/uploads': typeof AuthenticatedUploadsRoute
 }
 export interface FileRouteTypes {
@@ -106,6 +115,7 @@ export interface FileRouteTypes {
     | '/emails'
     | '/history'
     | '/open-jobs'
+    | '/settings'
     | '/uploads'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -116,6 +126,7 @@ export interface FileRouteTypes {
     | '/emails'
     | '/history'
     | '/open-jobs'
+    | '/settings'
     | '/uploads'
   id:
     | '__root__'
@@ -127,6 +138,7 @@ export interface FileRouteTypes {
     | '/_authenticated/emails'
     | '/_authenticated/history'
     | '/_authenticated/open-jobs'
+    | '/_authenticated/settings'
     | '/_authenticated/uploads'
   fileRoutesById: FileRoutesById
 }
@@ -164,6 +176,13 @@ declare module '@tanstack/react-router' {
       path: '/uploads'
       fullPath: '/uploads'
       preLoaderRoute: typeof AuthenticatedUploadsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/settings': {
+      id: '/_authenticated/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AuthenticatedSettingsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/open-jobs': {
@@ -210,6 +229,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedEmailsRoute: typeof AuthenticatedEmailsRoute
   AuthenticatedHistoryRoute: typeof AuthenticatedHistoryRoute
   AuthenticatedOpenJobsRoute: typeof AuthenticatedOpenJobsRoute
+  AuthenticatedSettingsRoute: typeof AuthenticatedSettingsRoute
   AuthenticatedUploadsRoute: typeof AuthenticatedUploadsRoute
 }
 
@@ -219,6 +239,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedEmailsRoute: AuthenticatedEmailsRoute,
   AuthenticatedHistoryRoute: AuthenticatedHistoryRoute,
   AuthenticatedOpenJobsRoute: AuthenticatedOpenJobsRoute,
+  AuthenticatedSettingsRoute: AuthenticatedSettingsRoute,
   AuthenticatedUploadsRoute: AuthenticatedUploadsRoute,
 }
 
