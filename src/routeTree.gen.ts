@@ -14,6 +14,7 @@ import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedUploadsRouteImport } from './routes/_authenticated/uploads'
 import { Route as AuthenticatedOpenJobsRouteImport } from './routes/_authenticated/open-jobs'
+import { Route as AuthenticatedHistoryRouteImport } from './routes/_authenticated/history'
 import { Route as AuthenticatedEmailsRouteImport } from './routes/_authenticated/emails'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedCustomersRouteImport } from './routes/_authenticated/customers'
@@ -42,6 +43,11 @@ const AuthenticatedOpenJobsRoute = AuthenticatedOpenJobsRouteImport.update({
   path: '/open-jobs',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedHistoryRoute = AuthenticatedHistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedEmailsRoute = AuthenticatedEmailsRouteImport.update({
   id: '/emails',
   path: '/emails',
@@ -64,6 +70,7 @@ export interface FileRoutesByFullPath {
   '/customers': typeof AuthenticatedCustomersRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/emails': typeof AuthenticatedEmailsRoute
+  '/history': typeof AuthenticatedHistoryRoute
   '/open-jobs': typeof AuthenticatedOpenJobsRoute
   '/uploads': typeof AuthenticatedUploadsRoute
 }
@@ -73,6 +80,7 @@ export interface FileRoutesByTo {
   '/customers': typeof AuthenticatedCustomersRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/emails': typeof AuthenticatedEmailsRoute
+  '/history': typeof AuthenticatedHistoryRoute
   '/open-jobs': typeof AuthenticatedOpenJobsRoute
   '/uploads': typeof AuthenticatedUploadsRoute
 }
@@ -84,6 +92,7 @@ export interface FileRoutesById {
   '/_authenticated/customers': typeof AuthenticatedCustomersRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/emails': typeof AuthenticatedEmailsRoute
+  '/_authenticated/history': typeof AuthenticatedHistoryRoute
   '/_authenticated/open-jobs': typeof AuthenticatedOpenJobsRoute
   '/_authenticated/uploads': typeof AuthenticatedUploadsRoute
 }
@@ -95,6 +104,7 @@ export interface FileRouteTypes {
     | '/customers'
     | '/dashboard'
     | '/emails'
+    | '/history'
     | '/open-jobs'
     | '/uploads'
   fileRoutesByTo: FileRoutesByTo
@@ -104,6 +114,7 @@ export interface FileRouteTypes {
     | '/customers'
     | '/dashboard'
     | '/emails'
+    | '/history'
     | '/open-jobs'
     | '/uploads'
   id:
@@ -114,6 +125,7 @@ export interface FileRouteTypes {
     | '/_authenticated/customers'
     | '/_authenticated/dashboard'
     | '/_authenticated/emails'
+    | '/_authenticated/history'
     | '/_authenticated/open-jobs'
     | '/_authenticated/uploads'
   fileRoutesById: FileRoutesById
@@ -161,6 +173,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedOpenJobsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/history': {
+      id: '/_authenticated/history'
+      path: '/history'
+      fullPath: '/history'
+      preLoaderRoute: typeof AuthenticatedHistoryRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/emails': {
       id: '/_authenticated/emails'
       path: '/emails'
@@ -189,6 +208,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedCustomersRoute: typeof AuthenticatedCustomersRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedEmailsRoute: typeof AuthenticatedEmailsRoute
+  AuthenticatedHistoryRoute: typeof AuthenticatedHistoryRoute
   AuthenticatedOpenJobsRoute: typeof AuthenticatedOpenJobsRoute
   AuthenticatedUploadsRoute: typeof AuthenticatedUploadsRoute
 }
@@ -197,6 +217,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedCustomersRoute: AuthenticatedCustomersRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedEmailsRoute: AuthenticatedEmailsRoute,
+  AuthenticatedHistoryRoute: AuthenticatedHistoryRoute,
   AuthenticatedOpenJobsRoute: AuthenticatedOpenJobsRoute,
   AuthenticatedUploadsRoute: AuthenticatedUploadsRoute,
 }
