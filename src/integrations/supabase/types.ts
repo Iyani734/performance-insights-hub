@@ -20,8 +20,10 @@ export type Database = {
           cc_emails: string[] | null
           created_at: string
           email: string | null
+          enabled: boolean
           id: string
           key: string
+          last_email_sent_at: string | null
           name: string
           updated_at: string
         }
@@ -30,8 +32,10 @@ export type Database = {
           cc_emails?: string[] | null
           created_at?: string
           email?: string | null
+          enabled?: boolean
           id?: string
           key: string
+          last_email_sent_at?: string | null
           name: string
           updated_at?: string
         }
@@ -40,8 +44,10 @@ export type Database = {
           cc_emails?: string[] | null
           created_at?: string
           email?: string | null
+          enabled?: boolean
           id?: string
           key?: string
+          last_email_sent_at?: string | null
           name?: string
           updated_at?: string
         }
@@ -49,7 +55,9 @@ export type Database = {
       }
       email_jobs: {
         Row: {
+          attachment_name: string | null
           batch_id: string
+          cc_emails: string[] | null
           created_at: string
           created_by: string | null
           customer_email: string | null
@@ -58,12 +66,16 @@ export type Database = {
           error: string | null
           id: string
           job_count: number | null
+          scheduled_for: string | null
           sent_at: string | null
           status: string
+          subject: string | null
           week_start: string
         }
         Insert: {
+          attachment_name?: string | null
           batch_id: string
+          cc_emails?: string[] | null
           created_at?: string
           created_by?: string | null
           customer_email?: string | null
@@ -72,12 +84,16 @@ export type Database = {
           error?: string | null
           id?: string
           job_count?: number | null
+          scheduled_for?: string | null
           sent_at?: string | null
           status?: string
+          subject?: string | null
           week_start: string
         }
         Update: {
+          attachment_name?: string | null
           batch_id?: string
+          cc_emails?: string[] | null
           created_at?: string
           created_by?: string | null
           customer_email?: string | null
@@ -86,8 +102,10 @@ export type Database = {
           error?: string | null
           id?: string
           job_count?: number | null
+          scheduled_for?: string | null
           sent_at?: string | null
           status?: string
+          subject?: string | null
           week_start?: string
         }
         Relationships: [
@@ -210,6 +228,8 @@ export type Database = {
       }
       open_jobs: {
         Row: {
+          address: string | null
+          age_days: number | null
           created_at: string
           customer_key: string
           customer_name: string
@@ -217,12 +237,17 @@ export type Database = {
           id: string
           job_no: string | null
           last_activity: string | null
+          notes: string | null
           order_type: string | null
+          status: string | null
+          technician: string | null
           ticket_no: string | null
           upload_id: string
           week_start: string
         }
         Insert: {
+          address?: string | null
+          age_days?: number | null
           created_at?: string
           customer_key: string
           customer_name: string
@@ -230,12 +255,17 @@ export type Database = {
           id?: string
           job_no?: string | null
           last_activity?: string | null
+          notes?: string | null
           order_type?: string | null
+          status?: string | null
+          technician?: string | null
           ticket_no?: string | null
           upload_id: string
           week_start: string
         }
         Update: {
+          address?: string | null
+          age_days?: number | null
           created_at?: string
           customer_key?: string
           customer_name?: string
@@ -243,7 +273,10 @@ export type Database = {
           id?: string
           job_no?: string | null
           last_activity?: string | null
+          notes?: string | null
           order_type?: string | null
+          status?: string | null
+          technician?: string | null
           ticket_no?: string | null
           upload_id?: string
           week_start?: string
@@ -282,31 +315,46 @@ export type Database = {
       report_uploads: {
         Row: {
           created_at: string
+          error_details: Json | null
+          errors_count: number | null
           file_name: string | null
           file_path: string | null
           id: string
           kind: Database["public"]["Enums"]["report_kind"]
+          processing_ms: number | null
           row_count: number | null
+          rows_skipped: number | null
+          status: string | null
           uploaded_by: string | null
           week_start: string
         }
         Insert: {
           created_at?: string
+          error_details?: Json | null
+          errors_count?: number | null
           file_name?: string | null
           file_path?: string | null
           id?: string
           kind: Database["public"]["Enums"]["report_kind"]
+          processing_ms?: number | null
           row_count?: number | null
+          rows_skipped?: number | null
+          status?: string | null
           uploaded_by?: string | null
           week_start: string
         }
         Update: {
           created_at?: string
+          error_details?: Json | null
+          errors_count?: number | null
           file_name?: string | null
           file_path?: string | null
           id?: string
           kind?: Database["public"]["Enums"]["report_kind"]
+          processing_ms?: number | null
           row_count?: number | null
+          rows_skipped?: number | null
+          status?: string | null
           uploaded_by?: string | null
           week_start?: string
         }
