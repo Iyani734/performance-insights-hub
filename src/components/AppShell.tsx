@@ -13,6 +13,7 @@ import {
   Menu,
   ChevronLeft,
   ChevronRight,
+  BarChart3,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/useAuth";
@@ -23,6 +24,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/uploads", label: "Uploads", icon: Upload },
   { to: "/open-jobs", label: "Open Jobs", icon: Briefcase },
   { to: "/customers", label: "Customers", icon: Users },
@@ -30,6 +32,7 @@ const NAV = [
   { to: "/history", label: "History", icon: History },
   { to: "/settings", label: "Settings", icon: Settings, adminOnly: true },
 ];
+
 
 function SidebarInner({
   collapsed,
