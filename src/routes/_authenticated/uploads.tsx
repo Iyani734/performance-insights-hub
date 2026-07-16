@@ -1,14 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { UploadCloud, FileSpreadsheet, Trash2, CheckCircle2, AlertTriangle, Download } from "lucide-react";
+import { UploadCloud, FileSpreadsheet, Trash2, CheckCircle2, AlertTriangle, Download, Check, X, ShieldAlert, User as UserIcon } from "lucide-react";
 import { formatWeek, weekStartOf } from "@/lib/kpi";
 import { readWorkbook, parseTicketsSheet, parseOpenJobsSheet } from "@/lib/parse";
 import { useAuth } from "@/lib/useAuth";
@@ -24,52 +26,66 @@ const KINDS = [
 function UploadsPage() {
   const qc = useQueryClient();
   const { user, role } = useAuth();
+  const isAdmin = role === "admin";
   const [kind, setKind] = useState<(typeof KINDS)[number]["value"]>("total_tickets");
   const [week, setWeek] = useState<string>(weekStartOf(new Date()));
   const [file, setFile] = useState<File | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
+  const [deleteReason, setDeleteReason] = useState("");
 
   const uploadsQ = useQuery({
     queryKey: ["uploads"],
-    queryFn: async () => {
-      const { data } = await supabase.from("report_uploads").select("*").order("created_at", { ascending: false }).limit(50);
-      return data ?? [];
-    },
+    queryFn: async () => (await supabase.from("report_uploads").select("*").order("created_at", { ascending: false }).limit(50)).data ?? [],
   });
+
+  const profilesQ = useQuery({
+    queryKey: ["profiles_all"],
+    queryFn: async () => (await supabase.from("profiles").select("id,full_name,email")).data ?? [],
+  });
+
+  const requestsQ = useQuery({
+    queryKey: ["delete_requests"],
+    queryFn: async () => (await supabase.from("upload_delete_requests").select("*").order("created_at", { ascending: false })).data ?? [],
+  });
+
+  const profileMap = useMemo(() => {
+    const m = new Map<string, { name: string; email: string }>();
+    for (const p of (profilesQ.data ?? []) as any[]) m.set(p.id, { name: p.full_name ?? p.email ?? "Unknown", email: p.email ?? "" });
+    return m;
+  }, [profilesQ.data]);
+
+  const pendingByUpload = useMemo(() => {
+    const m = new Map<string, any>();
+    for (const r of (requestsQ.data ?? []) as any[]) {
+      if (r.status === "pending") m.set(r.upload_id, r);
+    }
+    return m;
+  }, [requestsQ.data]);
 
   const upload = useMutation({
     mutationFn: async () => {
       if (!file || !user) throw new Error("Missing file");
       const t0 = performance.now();
       const wb = await readWorkbook(file);
-
-      // Persist original file
       const filePath = `${week}/${Date.now()}-${file.name}`;
       const { error: sErr } = await supabase.storage.from("report-files").upload(filePath, file, { upsert: false });
       if (sErr) console.warn("Storage upload failed:", sErr.message);
-
       const { data: up, error } = await supabase.from("report_uploads")
         .insert({ kind, week_start: week, file_name: file.name, uploaded_by: user.id, row_count: 0, status: "processing", file_path: filePath })
         .select().single();
       if (error) throw error;
-
       let stats;
       if (kind === "open_jobs") {
         const parsed = parseOpenJobsSheet(wb);
         stats = parsed.stats;
         const payload = parsed.rows.map(r => ({ ...r, upload_id: up.id, week_start: week }));
-        for (const c of chunk(payload, 500)) {
-          const { error: e } = await supabase.from("open_jobs").insert(c as any);
-          if (e) throw e;
-        }
+        for (const c of chunk(payload, 500)) { const { error: e } = await supabase.from("open_jobs").insert(c as any); if (e) throw e; }
       } else {
         const parsed = parseTicketsSheet(wb);
         stats = parsed.stats;
         const tKind = kind === "total_tickets" ? "tickets" : "invoiced";
         const payload = parsed.rows.map(r => ({ ...r, upload_id: up.id, week_start: week, kind: tKind, raw: r.raw }));
-        for (const c of chunk(payload, 500)) {
-          const { error: e } = await supabase.from("tickets").insert(c as any);
-          if (e) throw e;
-        }
+        for (const c of chunk(payload, 500)) { const { error: e } = await supabase.from("tickets").insert(c as any); if (e) throw e; }
         const { computeAutoKpis } = await import("@/lib/kpi");
         const auto = await computeAutoKpis(week);
         const upserts = [
@@ -82,32 +98,55 @@ function UploadsPage() {
         ].filter(v => v.actual != null).map(v => ({ ...v, week_start: week, source: "auto", entered_by: user.id }));
         if (upserts.length) await supabase.from("kpi_values").upsert(upserts, { onConflict: "kpi_key,week_start" });
       }
-
       const dt = Math.round(performance.now() - t0);
       await supabase.from("report_uploads").update({
-        row_count: stats.imported,
-        rows_skipped: stats.skipped,
-        errors_count: stats.errors,
-        processing_ms: dt,
-        error_details: stats.error_details as any,
+        row_count: stats.imported, rows_skipped: stats.skipped, errors_count: stats.errors,
+        processing_ms: dt, error_details: stats.error_details as any,
         status: stats.errors > 0 ? "partial" : "success",
       }).eq("id", up.id);
       return stats;
     },
-    onSuccess: (s) => {
-      toast.success(`${s.imported} imported${s.skipped ? `, ${s.skipped} skipped` : ""}${s.errors ? `, ${s.errors} errors` : ""}`);
-      setFile(null);
-      qc.invalidateQueries();
-    },
+    onSuccess: (s) => { toast.success(`${s.imported} imported${s.skipped ? `, ${s.skipped} skipped` : ""}${s.errors ? `, ${s.errors} errors` : ""}`); setFile(null); qc.invalidateQueries(); },
     onError: (e: any) => toast.error(e.message ?? "Upload failed"),
   });
 
-  const del = useMutation({
+  // Non-admin: request deletion; Admin: delete immediately
+  const requestDelete = useMutation({
+    mutationFn: async () => {
+      if (!deleteTarget || !user) return;
+      const { error } = await supabase.from("upload_delete_requests").insert({
+        upload_id: deleteTarget.id, requested_by: user.id,
+        requested_by_name: profileMap.get(user.id)?.name ?? user.email,
+        reason: deleteReason.trim() || null,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => { toast.success("Deletion requested — awaiting admin approval"); setDeleteTarget(null); setDeleteReason(""); qc.invalidateQueries({ queryKey: ["delete_requests"] }); },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const adminDelete = useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase.from("report_uploads").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { toast.success("Deleted"); qc.invalidateQueries(); },
+    onSuccess: () => { toast.success("Upload deleted"); qc.invalidateQueries(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const resolveReq = useMutation({
+    mutationFn: async ({ req, approve }: { req: any; approve: boolean }) => {
+      if (approve) {
+        const { error: dErr } = await supabase.from("report_uploads").delete().eq("id", req.upload_id);
+        if (dErr) throw dErr;
+      }
+      const { error } = await supabase.from("upload_delete_requests").update({
+        status: approve ? "approved" : "rejected",
+        resolved_by: user?.id ?? null, resolved_at: new Date().toISOString(),
+      }).eq("id", req.id);
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => { toast.success(v.approve ? "Approved & deleted" : "Rejected"); qc.invalidateQueries(); },
     onError: (e: any) => toast.error(e.message),
   });
 
@@ -118,8 +157,10 @@ function UploadsPage() {
     window.open(data.signedUrl, "_blank");
   }
 
+  const pendingCount = (requestsQ.data ?? []).filter((r: any) => r.status === "pending").length;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-in fade-in duration-300">
       <header>
         <h1 className="font-display text-3xl font-semibold">Weekly Uploads</h1>
         <p className="text-sm text-muted-foreground mt-1">Upload Total Tickets, Total Invoiced, or Open Jobs exports.</p>
@@ -145,69 +186,132 @@ function UploadsPage() {
         </div>
         <div className="mt-6 flex items-center gap-3">
           <Button onClick={() => upload.mutate()} disabled={!file || upload.isPending}>
-            <UploadCloud className="w-4 h-4 mr-2" />
-            {upload.isPending ? "Processing…" : "Upload & Process"}
+            <UploadCloud className="w-4 h-4 mr-2" />{upload.isPending ? "Processing…" : "Upload & Process"}
           </Button>
           {file && <span className="text-sm text-muted-foreground">{file.name}</span>}
         </div>
       </Card>
 
+      {isAdmin && pendingCount > 0 && (
+        <Card className="p-6 border-warning/40 bg-warning/5">
+          <h2 className="font-display text-lg font-semibold mb-3 flex items-center gap-2">
+            <ShieldAlert className="w-4 h-4 text-warning" />
+            Pending deletion requests <span className="text-xs font-normal text-muted-foreground">({pendingCount})</span>
+          </h2>
+          <div className="space-y-2">
+            {(requestsQ.data ?? []).filter((r: any) => r.status === "pending").map((r: any) => {
+              const u = (uploadsQ.data ?? []).find((x: any) => x.id === r.upload_id);
+              return (
+                <div key={r.id} className="flex flex-wrap items-center gap-3 p-3 rounded-md bg-card border">
+                  <FileSpreadsheet className="w-4 h-4 text-primary shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{u?.file_name ?? "Deleted file"}</div>
+                    <div className="text-xs text-muted-foreground">Requested by <b>{r.requested_by_name ?? "Unknown"}</b> · {new Date(r.created_at).toLocaleString()}{r.reason ? ` · "${r.reason}"` : ""}</div>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={() => resolveReq.mutate({ req: r, approve: false })} disabled={resolveReq.isPending}>
+                    <X className="w-3.5 h-3.5 mr-1" />Reject
+                  </Button>
+                  <Button size="sm" variant="destructive" onClick={() => resolveReq.mutate({ req: r, approve: true })} disabled={resolveReq.isPending}>
+                    <Check className="w-3.5 h-3.5 mr-1" />Approve & delete
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
       <Card>
-        <div className="px-6 py-4 border-b">
+        <div className="px-6 py-4 border-b flex items-center justify-between">
           <h2 className="font-display text-lg font-semibold">Upload history</h2>
+          <span className="text-xs text-muted-foreground">{(uploadsQ.data ?? []).length} uploads</span>
         </div>
-        <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-            <tr>
-              <th className="text-left px-6 py-3 font-medium">When</th>
-              <th className="text-left px-6 py-3 font-medium">Type</th>
-              <th className="text-left px-6 py-3 font-medium">Week</th>
-              <th className="text-left px-6 py-3 font-medium">File</th>
-              <th className="text-right px-6 py-3 font-medium">Imported</th>
-              <th className="text-right px-6 py-3 font-medium">Skipped</th>
-              <th className="text-right px-6 py-3 font-medium">Errors</th>
-              <th className="text-left px-6 py-3 font-medium">Status</th>
-              <th className="text-right px-6 py-3 font-medium">Time</th>
-              <th className="px-6 py-3" />
-            </tr>
-          </thead>
-          <tbody>
-            {(uploadsQ.data ?? []).map((u: any) => (
-              <tr key={u.id} className="border-t">
-                <td className="px-6 py-3 text-muted-foreground whitespace-nowrap">{new Date(u.created_at).toLocaleString()}</td>
-                <td className="px-6 py-3"><span className="inline-flex items-center gap-1.5"><FileSpreadsheet className="w-4 h-4 text-primary" />{KINDS.find(k => k.value === u.kind)?.label}</span></td>
-                <td className="px-6 py-3 whitespace-nowrap">{formatWeek(u.week_start)}</td>
-                <td className="px-6 py-3 text-muted-foreground max-w-[220px] truncate">{u.file_name}</td>
-                <td className="px-6 py-3 text-right font-medium">{u.row_count ?? 0}</td>
-                <td className="px-6 py-3 text-right text-muted-foreground">{u.rows_skipped ?? 0}</td>
-                <td className={`px-6 py-3 text-right ${(u.errors_count ?? 0) > 0 ? "text-destructive font-medium" : "text-muted-foreground"}`}>{u.errors_count ?? 0}</td>
-                <td className="px-6 py-3">
-                  {u.status === "success" && <span className="inline-flex items-center gap-1 text-success text-xs font-medium"><CheckCircle2 className="w-3.5 h-3.5" />Success</span>}
-                  {u.status === "partial" && <span className="inline-flex items-center gap-1 text-warning text-xs font-medium"><AlertTriangle className="w-3.5 h-3.5" />Partial</span>}
-                  {u.status === "processing" && <span className="text-muted-foreground text-xs">Processing…</span>}
-                  {!u.status && <span className="text-muted-foreground text-xs">—</span>}
-                </td>
-                <td className="px-6 py-3 text-right text-muted-foreground text-xs">{u.processing_ms ? `${(u.processing_ms / 1000).toFixed(1)}s` : "—"}</td>
-                <td className="px-6 py-3 text-right whitespace-nowrap">
-                  {u.file_path && (
-                    <Button size="sm" variant="ghost" onClick={() => downloadFile(u)}><Download className="w-4 h-4" /></Button>
-                  )}
-                  {role === "admin" && (
-                    <Button size="sm" variant="ghost" onClick={() => confirm("Delete this upload and its data?") && del.mutate(u.id)}>
-                      <Trash2 className="w-4 h-4 text-destructive" />
-                    </Button>
-                  )}
-                </td>
+        <div className="max-h-[520px] overflow-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/70 text-xs uppercase text-muted-foreground sticky top-0 backdrop-blur z-10">
+              <tr>
+                <th className="text-left px-4 py-3 font-medium">When</th>
+                <th className="text-left px-4 py-3 font-medium">Uploaded by</th>
+                <th className="text-left px-4 py-3 font-medium">Type</th>
+                <th className="text-left px-4 py-3 font-medium">Week</th>
+                <th className="text-left px-4 py-3 font-medium">File</th>
+                <th className="text-right px-4 py-3 font-medium">Imported</th>
+                <th className="text-right px-4 py-3 font-medium">Errors</th>
+                <th className="text-left px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3" />
               </tr>
-            ))}
-            {(uploadsQ.data ?? []).length === 0 && (
-              <tr><td colSpan={10} className="text-center py-8 text-sm text-muted-foreground">No uploads yet.</td></tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {(uploadsQ.data ?? []).map((u: any) => {
+                const uploader = u.uploaded_by ? profileMap.get(u.uploaded_by) : null;
+                const pending = pendingByUpload.get(u.id);
+                const isMine = user?.id === u.uploaded_by;
+                return (
+                  <tr key={u.id} className="border-t hover:bg-muted/30">
+                    <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{new Date(u.created_at).toLocaleString()}</td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="w-6 h-6 rounded-full bg-primary/15 text-primary flex items-center justify-center text-[10px] font-semibold">
+                          {(uploader?.name ?? "?").slice(0, 1).toUpperCase()}
+                        </span>
+                        <span className="font-medium">{uploader?.name ?? "Unknown"}</span>
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5"><span className="inline-flex items-center gap-1.5"><FileSpreadsheet className="w-4 h-4 text-primary" />{KINDS.find(k => k.value === u.kind)?.label ?? u.kind}</span></td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">{formatWeek(u.week_start)}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground max-w-[220px] truncate">{u.file_name}</td>
+                    <td className="px-4 py-2.5 text-right font-medium">{u.row_count ?? 0}</td>
+                    <td className={`px-4 py-2.5 text-right ${(u.errors_count ?? 0) > 0 ? "text-destructive font-medium" : "text-muted-foreground"}`}>{u.errors_count ?? 0}</td>
+                    <td className="px-4 py-2.5">
+                      {u.status === "success" && <span className="inline-flex items-center gap-1 text-success text-xs font-medium"><CheckCircle2 className="w-3.5 h-3.5" />Success</span>}
+                      {u.status === "partial" && <span className="inline-flex items-center gap-1 text-warning text-xs font-medium"><AlertTriangle className="w-3.5 h-3.5" />Partial</span>}
+                      {u.status === "processing" && <span className="text-muted-foreground text-xs">Processing…</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                      {u.file_path && <Button size="sm" variant="ghost" onClick={() => downloadFile(u)} title="Download"><Download className="w-4 h-4" /></Button>}
+                      {pending ? (
+                        <span className="text-xs text-warning font-medium ml-1">Deletion pending</span>
+                      ) : isAdmin ? (
+                        <Button size="sm" variant="ghost" onClick={() => confirm("Delete this upload and its data?") && adminDelete.mutate(u.id)} title="Delete (admin)">
+                          <Trash2 className="w-4 h-4 text-destructive" />
+                        </Button>
+                      ) : isMine ? (
+                        <Button size="sm" variant="ghost" onClick={() => { setDeleteTarget(u); setDeleteReason(""); }} title="Request deletion">
+                          <Trash2 className="w-4 h-4 text-muted-foreground" />
+                        </Button>
+                      ) : null}
+                    </td>
+                  </tr>
+                );
+              })}
+              {(uploadsQ.data ?? []).length === 0 && (
+                <tr><td colSpan={9} className="text-center py-8 text-sm text-muted-foreground">No uploads yet.</td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </Card>
+
+      <Dialog open={!!deleteTarget} onOpenChange={(o) => { if (!o) { setDeleteTarget(null); setDeleteReason(""); } }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Request deletion</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              This request goes to an admin for approval. On approval, <b>{deleteTarget?.file_name}</b> and all its imported rows will be permanently removed.
+            </p>
+            <div className="space-y-1.5">
+              <Label>Reason (optional)</Label>
+              <Textarea value={deleteReason} onChange={e => setDeleteReason(e.target.value)} placeholder="e.g. Wrong week selected, corrupted data…" rows={3} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button onClick={() => requestDelete.mutate()} disabled={requestDelete.isPending}>
+              {requestDelete.isPending ? "Sending…" : "Submit request"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
