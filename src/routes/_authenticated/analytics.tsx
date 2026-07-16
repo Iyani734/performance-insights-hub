@@ -22,7 +22,7 @@ function statusBg(s: KpiStatus): string {
 }
 
 function AnalyticsPage() {
-  const [window, setWindow] = useState<string>("12");
+  const [range, setRange] = useState<DateRange>({ preset: "12" });
 
   const targetsQ = useQuery({
     queryKey: ["kpi_targets"],
@@ -39,9 +39,11 @@ function AnalyticsPage() {
 
   const weeks = useMemo(() => {
     const all = Array.from(new Set(rows.map(r => r.week_start))).sort();
-    const n = window === "all" ? all.length : Math.min(all.length, Number(window));
-    return all.slice(-n);
-  }, [rows, window]);
+    if (range.preset === "all") return all;
+    if (range.preset === "custom" && range.from && range.to) return all.filter(w => w >= range.from! && w <= range.to!);
+    const n = Number(range.preset);
+    return Number.isFinite(n) ? all.slice(-n) : all;
+  }, [rows, range]);
 
   const byKpi = useMemo(() => {
     const m = new Map<string, Map<string, number | null>>();
@@ -92,16 +94,7 @@ function AnalyticsPage() {
           <h1 className="font-display text-3xl font-semibold">Operations Analytics</h1>
           <p className="text-sm text-muted-foreground mt-1">Per-KPI trends, heatmap and smart insights across your weekly reports.</p>
         </div>
-        <Select value={window} onValueChange={setWindow}>
-          <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="4">Last 4 weeks</SelectItem>
-            <SelectItem value="8">Last 8 weeks</SelectItem>
-            <SelectItem value="12">Last 12 weeks</SelectItem>
-            <SelectItem value="26">Last 26 weeks</SelectItem>
-            <SelectItem value="all">All time</SelectItem>
-          </SelectContent>
-        </Select>
+        <DateRangeSelect value={range} onChange={setRange} />
       </header>
 
       {loading && (
