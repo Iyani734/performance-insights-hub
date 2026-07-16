@@ -7,22 +7,35 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { computeStatus, formatKpi, formatWeek, type KpiTarget } from "@/lib/kpi";
 import { deltaPct } from "@/lib/summary";
 import { StatusPill } from "@/components/StatusPill";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Download, ArrowUp, ArrowDown, Minus } from "lucide-react";
+import { Download, ArrowUp, ArrowDown, Minus, Search } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { downloadXlsx } from "@/lib/parse";
 import { toast } from "sonner";
+import { DateRangeSelect, type DateRange } from "@/components/DateRangeSelect";
 
 export const Route = createFileRoute("/_authenticated/history")({ component: HistoryPage });
 
 function monthOf(iso: string) { return iso.slice(0, 7); }
 function monthLabel(m: string) {
-  const d = new Date(m + "-01T00:00:00Z");
-  return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  return new Date(m + "-01T00:00:00Z").toLocaleDateString(undefined, { month: "long", year: "numeric" });
 }
 
+const SERIES_COLORS = [
+  "hsl(200 85% 55%)",
+  "hsl(280 65% 60%)",
+  "hsl(30 90% 55%)",
+  "hsl(150 60% 45%)",
+  "hsl(340 75% 55%)",
+  "hsl(180 60% 45%)",
+];
+
 function HistoryPage() {
+  const [range, setRange] = useState<DateRange>({ preset: "12" });
+  const [search, setSearch] = useState("");
+
   const targetsQ = useQuery({
     queryKey: ["kpi_targets"],
     queryFn: async () => ((await supabase.from("kpi_targets").select("*").order("sort_order")).data ?? []) as KpiTarget[],
@@ -38,28 +51,50 @@ function HistoryPage() {
     queryFn: async () => ((await supabase.from("report_uploads").select("*").order("created_at", { ascending: false }).limit(200)).data ?? []),
   });
 
-  const grid = useMemo(() => {
-    const weeks = Array.from(new Set((valuesQ.data ?? []).map((v: any) => v.week_start))).sort().reverse();
-    return { weeks, values: valuesQ.data ?? [] };
-  }, [valuesQ.data]);
-
-  const chartData = useMemo(() => {
-    const map = new Map<string, any>();
-    for (const v of valuesQ.data ?? []) {
-      const wk = formatWeek(v.week_start);
-      if (!map.has(wk)) map.set(wk, { week: wk });
-      map.get(wk)[v.kpi_key] = Number(v.actual);
-    }
-    return Array.from(map.values()).reverse();
-  }, [valuesQ.data]);
-
   const targets = targetsQ.data ?? [];
 
+  const allWeeks = useMemo(
+    () => Array.from(new Set((valuesQ.data ?? []).map((v: any) => v.week_start as string))).sort().reverse(),
+    [valuesQ.data]
+  );
+
+  // Apply date range filter to weeks list
+  const filteredWeeks = useMemo(() => {
+    if (range.preset === "all") return allWeeks;
+    if (range.preset === "custom" && range.from && range.to) {
+      return allWeeks.filter(w => w >= range.from! && w <= range.to!);
+    }
+    const n = Number(range.preset);
+    if (Number.isFinite(n)) return allWeeks.slice(0, n);
+    return allWeeks;
+  }, [allWeeks, range]);
+
+  const chartData = useMemo(() => {
+    const weeksAsc = [...filteredWeeks].reverse();
+    return weeksAsc.map(w => {
+      const row: any = { week: formatWeek(w).replace(/,.*/, "") };
+      for (const t of targets) {
+        const v = (valuesQ.data ?? []).find((x: any) => x.week_start === w && x.kpi_key === t.kpi_key);
+        row[t.label] = v ? Number(v.actual) : null;
+      }
+      return row;
+    });
+  }, [filteredWeeks, valuesQ.data, targets]);
+
+  const [visibleKpis, setVisibleKpis] = useState<string[]>([]);
+  const displayedKpis = visibleKpis.length ? visibleKpis : targets.slice(0, 4).map(t => t.kpi_key);
+
+  const rowsFiltered = useMemo(() => {
+    if (!search.trim()) return filteredWeeks;
+    const q = search.toLowerCase();
+    return filteredWeeks.filter(w => formatWeek(w).toLowerCase().includes(q));
+  }, [filteredWeeks, search]);
+
   function exportCsv() {
-    const out = grid.weeks.map((w) => {
+    const out = filteredWeeks.map((w) => {
       const row: any = { Week: formatWeek(w) };
       for (const t of targets) {
-        const v = grid.values.find((x: any) => x.week_start === w && x.kpi_key === t.kpi_key);
+        const v = (valuesQ.data ?? []).find((x: any) => x.week_start === w && x.kpi_key === t.kpi_key);
         row[t.label] = v ? Number(v.actual) : null;
       }
       return row;
@@ -69,20 +104,20 @@ function HistoryPage() {
 
   const [weekA, setWeekA] = useState<string | null>(null);
   const [weekB, setWeekB] = useState<string | null>(null);
-  const wA = weekA ?? grid.weeks[0] ?? null;
-  const wB = weekB ?? grid.weeks[1] ?? null;
+  const wA = weekA ?? allWeeks[0] ?? null;
+  const wB = weekB ?? allWeeks[1] ?? null;
 
   function valueAt(week: string | null, key: string): number | null {
     if (!week) return null;
-    const v = grid.values.find((x: any) => x.week_start === week && x.kpi_key === key);
+    const v = (valuesQ.data ?? []).find((x: any) => x.week_start === week && x.kpi_key === key);
     return v ? Number(v.actual) : null;
   }
 
   const months = useMemo(() => {
     const set = new Set<string>();
-    for (const w of grid.weeks) set.add(monthOf(w));
+    for (const w of allWeeks) set.add(monthOf(w));
     return Array.from(set).sort().reverse();
-  }, [grid.weeks]);
+  }, [allWeeks]);
 
   const [monthA, setMonthA] = useState<string | null>(null);
   const [monthB, setMonthB] = useState<string | null>(null);
@@ -91,7 +126,9 @@ function HistoryPage() {
 
   function monthAvg(month: string | null, key: string): number | null {
     if (!month) return null;
-    const vals = grid.values.filter((v: any) => v.kpi_key === key && monthOf(v.week_start) === month && v.actual != null).map((v: any) => Number(v.actual));
+    const vals = (valuesQ.data ?? [])
+      .filter((v: any) => v.kpi_key === key && monthOf(v.week_start) === month && v.actual != null)
+      .map((v: any) => Number(v.actual));
     if (!vals.length) return null;
     return vals.reduce((a: number, b: number) => a + b, 0) / vals.length;
   }
@@ -104,13 +141,16 @@ function HistoryPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <header className="flex items-end justify-between">
+    <div className="space-y-6 animate-in fade-in duration-300">
+      <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-3xl font-semibold">Historical Performance</h1>
           <p className="text-sm text-muted-foreground mt-1">KPI trends, weekly comparisons, and previous uploads.</p>
         </div>
-        <Button variant="outline" onClick={exportCsv}><Download className="w-4 h-4 mr-2" />Export</Button>
+        <div className="flex items-center gap-2">
+          <DateRangeSelect value={range} onChange={setRange} />
+          <Button variant="outline" onClick={exportCsv}><Download className="w-4 h-4 mr-2" />Export</Button>
+        </div>
       </header>
 
       <Tabs defaultValue="kpi">
@@ -123,47 +163,102 @@ function HistoryPage() {
 
         <TabsContent value="kpi" className="space-y-6 mt-4">
           <Card className="p-6">
-            <h3 className="font-display text-base font-semibold mb-4">Weekly KPI values</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="week" stroke="var(--muted-foreground)" fontSize={11} />
-                <YAxis stroke="var(--muted-foreground)" fontSize={11} />
-                <Tooltip contentStyle={{ borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }} />
-                <Bar dataKey="review_to_final_edit" fill="oklch(0.62 0.13 190)" radius={[4,4,0,0]} name="Review→Final Edit" />
-                <Bar dataKey="ticket_quality" fill="oklch(0.78 0.16 75)" radius={[4,4,0,0]} name="Ticket Quality" />
-                <Bar dataKey="invoice_cycle_time" fill="oklch(0.6 0.22 25)" radius={[4,4,0,0]} name="Invoice Cycle" />
-              </BarChart>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div>
+                <h3 className="font-display text-base font-semibold">Weekly KPI values</h3>
+                <p className="text-xs text-muted-foreground">Toggle metrics to focus the view</p>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {targets.map((t, i) => {
+                  const active = displayedKpis.includes(t.kpi_key);
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => setVisibleKpis(v => {
+                        const cur = v.length ? v : targets.slice(0, 4).map(x => x.kpi_key);
+                        return cur.includes(t.kpi_key) ? cur.filter(k => k !== t.kpi_key) : [...cur, t.kpi_key];
+                      })}
+                      className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                        active ? "bg-primary/10 border-primary/30 text-foreground" : "border-border text-muted-foreground hover:bg-muted/50"
+                      }`}
+                    >
+                      <span className="w-2 h-2 rounded-full" style={{ background: SERIES_COLORS[i % SERIES_COLORS.length] }} />
+                      {t.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <ResponsiveContainer width="100%" height={320}>
+              <AreaChart data={chartData} margin={{ top: 8, right: 16, left: -8, bottom: 0 }}>
+                <defs>
+                  {targets.map((t, i) => (
+                    <linearGradient key={t.id} id={`grad-${t.kpi_key}`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={SERIES_COLORS[i % SERIES_COLORS.length]} stopOpacity={0.35} />
+                      <stop offset="100%" stopColor={SERIES_COLORS[i % SERIES_COLORS.length]} stopOpacity={0} />
+                    </linearGradient>
+                  ))}
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.5} />
+                <XAxis dataKey="week" stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} />
+                <YAxis stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", background: "var(--card)", boxShadow: "0 8px 24px -12px rgba(0,0,0,0.15)" }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" />
+                {targets.map((t, i) => displayedKpis.includes(t.kpi_key) && (
+                  <Area
+                    key={t.id}
+                    type="monotone"
+                    dataKey={t.label}
+                    stroke={SERIES_COLORS[i % SERIES_COLORS.length]}
+                    strokeWidth={2.5}
+                    fill={`url(#grad-${t.kpi_key})`}
+                    connectNulls
+                    dot={{ r: 3, strokeWidth: 0 }}
+                    activeDot={{ r: 5 }}
+                  />
+                ))}
+              </AreaChart>
             </ResponsiveContainer>
           </Card>
 
           <Card>
-            <div className="px-6 py-4 border-b"><h2 className="font-display text-lg font-semibold">All weeks</h2></div>
-            <div className="overflow-x-auto">
+            <div className="px-6 py-4 border-b flex items-center gap-3">
+              <h2 className="font-display text-lg font-semibold mr-auto">All weeks</h2>
+              <div className="relative">
+                <Search className="w-4 h-4 absolute left-2.5 top-2.5 text-muted-foreground" />
+                <Input placeholder="Search week…" value={search} onChange={e => setSearch(e.target.value)} className="pl-8 h-9 w-[200px]" />
+              </div>
+              <span className="text-xs text-muted-foreground">{rowsFiltered.length} weeks</span>
+            </div>
+            <div className="max-h-[520px] overflow-auto">
               <table className="w-full text-sm">
-                <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+                <thead className="bg-muted/70 text-xs uppercase text-muted-foreground sticky top-0 backdrop-blur z-10">
                   <tr>
-                    <th className="text-left px-6 py-3 font-medium">Week</th>
-                    {targets.map(t => <th key={t.id} className="text-left px-6 py-3 font-medium">{t.label}</th>)}
+                    <th className="text-left px-4 py-3 font-medium">Week</th>
+                    {targets.map(t => <th key={t.id} className="text-left px-3 py-3 font-medium whitespace-nowrap">{t.label}</th>)}
                   </tr>
                 </thead>
                 <tbody>
-                  {grid.weeks.map((w) => (
-                    <tr key={w} className="border-t">
-                      <td className="px-6 py-3 font-medium whitespace-nowrap">{formatWeek(w)}</td>
+                  {rowsFiltered.map((w) => (
+                    <tr key={w} className="border-t hover:bg-muted/30 transition-colors">
+                      <td className="px-4 py-2.5 font-medium whitespace-nowrap">{formatWeek(w)}</td>
                       {targets.map(t => {
-                        const v = grid.values.find((x: any) => x.week_start === w && x.kpi_key === t.kpi_key);
+                        const v = (valuesQ.data ?? []).find((x: any) => x.week_start === w && x.kpi_key === t.kpi_key);
                         const actual = v ? Number(v.actual) : null;
-                        return <td key={t.id} className="px-6 py-3">
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold">{formatKpi(actual, t)}</span>
-                            <StatusPill status={computeStatus(actual, t)} />
-                          </div>
-                        </td>;
+                        const s = computeStatus(actual, t);
+                        const dot = s === "green" ? "bg-success" : s === "yellow" ? "bg-warning" : s === "red" ? "bg-destructive" : "bg-muted";
+                        return (
+                          <td key={t.id} className="px-3 py-2.5">
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
+                              <span className="font-medium">{formatKpi(actual, t)}</span>
+                            </span>
+                          </td>
+                        );
                       })}
                     </tr>
                   ))}
-                  {grid.weeks.length === 0 && <tr><td colSpan={targets.length + 1} className="text-center py-8 text-sm text-muted-foreground">No historical data yet.</td></tr>}
+                  {rowsFiltered.length === 0 && <tr><td colSpan={targets.length + 1} className="text-center py-12 text-sm text-muted-foreground">No weeks match.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -176,12 +271,12 @@ function HistoryPage() {
               <h2 className="font-display text-lg font-semibold mr-auto">Compare weeks</h2>
               <Select value={wA ?? ""} onValueChange={setWeekA}>
                 <SelectTrigger className="w-[200px]"><SelectValue placeholder="Week A" /></SelectTrigger>
-                <SelectContent>{grid.weeks.map(w => <SelectItem key={w} value={w}>{formatWeek(w)}</SelectItem>)}</SelectContent>
+                <SelectContent>{allWeeks.map(w => <SelectItem key={w} value={w}>{formatWeek(w)}</SelectItem>)}</SelectContent>
               </Select>
               <span className="text-muted-foreground">vs.</span>
               <Select value={wB ?? ""} onValueChange={setWeekB}>
                 <SelectTrigger className="w-[200px]"><SelectValue placeholder="Week B" /></SelectTrigger>
-                <SelectContent>{grid.weeks.map(w => <SelectItem key={w} value={w}>{formatWeek(w)}</SelectItem>)}</SelectContent>
+                <SelectContent>{allWeeks.map(w => <SelectItem key={w} value={w}>{formatWeek(w)}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="overflow-x-auto">
@@ -203,7 +298,7 @@ function HistoryPage() {
                     return (
                       <tr key={t.id} className="border-t">
                         <td className="px-6 py-3 font-medium">{t.label}</td>
-                        <td className="px-6 py-3">{formatKpi(a, t)}</td>
+                        <td className="px-6 py-3"><span className="inline-flex items-center gap-2">{formatKpi(a, t)} <StatusPill status={computeStatus(a, t)} /></span></td>
                         <td className="px-6 py-3 text-muted-foreground">{formatKpi(b, t)}</td>
                         <td className={`px-6 py-3 ${d == null ? "text-muted-foreground" : better ? "text-success" : "text-destructive"}`}>
                           <span className="inline-flex items-center gap-1"><Icon className="w-3 h-3" />{d == null ? "—" : `${Math.abs(d).toFixed(1)}%`}</span>
@@ -264,9 +359,9 @@ function HistoryPage() {
         <TabsContent value="uploads" className="mt-4">
           <Card>
             <div className="px-6 py-4 border-b"><h2 className="font-display text-lg font-semibold">All uploads</h2></div>
-            <div className="overflow-x-auto">
+            <div className="max-h-[520px] overflow-auto">
               <table className="w-full text-sm">
-                <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+                <thead className="bg-muted/70 text-xs uppercase text-muted-foreground sticky top-0 backdrop-blur z-10">
                   <tr>
                     <th className="text-left px-6 py-3 font-medium">When</th>
                     <th className="text-left px-6 py-3 font-medium">Week</th>
@@ -278,13 +373,13 @@ function HistoryPage() {
                 </thead>
                 <tbody>
                   {(uploadsQ.data ?? []).map((u: any) => (
-                    <tr key={u.id} className="border-t">
-                      <td className="px-6 py-3 text-muted-foreground whitespace-nowrap">{new Date(u.created_at).toLocaleString()}</td>
-                      <td className="px-6 py-3 whitespace-nowrap">{formatWeek(u.week_start)}</td>
-                      <td className="px-6 py-3">{u.kind}</td>
-                      <td className="px-6 py-3 text-muted-foreground truncate max-w-[280px]">{u.file_name}</td>
-                      <td className="px-6 py-3 text-right font-medium">{u.row_count ?? 0}</td>
-                      <td className="px-6 py-3 text-right">
+                    <tr key={u.id} className="border-t hover:bg-muted/30">
+                      <td className="px-6 py-2.5 text-muted-foreground whitespace-nowrap">{new Date(u.created_at).toLocaleString()}</td>
+                      <td className="px-6 py-2.5 whitespace-nowrap">{formatWeek(u.week_start)}</td>
+                      <td className="px-6 py-2.5">{u.kind}</td>
+                      <td className="px-6 py-2.5 text-muted-foreground truncate max-w-[280px]">{u.file_name}</td>
+                      <td className="px-6 py-2.5 text-right font-medium">{u.row_count ?? 0}</td>
+                      <td className="px-6 py-2.5 text-right">
                         {u.file_path && <Button size="sm" variant="ghost" onClick={() => downloadUpload(u)}><Download className="w-4 h-4" /></Button>}
                       </td>
                     </tr>

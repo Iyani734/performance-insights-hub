@@ -3,12 +3,12 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, Area, AreaChart } from "recharts";
 import { computeStatus, formatKpi, formatWeek, type KpiTarget, type KpiStatus } from "@/lib/kpi";
 import { StatusPill } from "@/components/StatusPill";
 import { cn } from "@/lib/utils";
 import { TrendingUp, TrendingDown, Minus, BarChart3, Grid3x3, Sparkles } from "lucide-react";
+import { DateRangeSelect, type DateRange } from "@/components/DateRangeSelect";
 
 export const Route = createFileRoute("/_authenticated/analytics")({ component: AnalyticsPage });
 
@@ -22,7 +22,7 @@ function statusBg(s: KpiStatus): string {
 }
 
 function AnalyticsPage() {
-  const [window, setWindow] = useState<string>("12");
+  const [range, setRange] = useState<DateRange>({ preset: "12" });
 
   const targetsQ = useQuery({
     queryKey: ["kpi_targets"],
@@ -39,9 +39,11 @@ function AnalyticsPage() {
 
   const weeks = useMemo(() => {
     const all = Array.from(new Set(rows.map(r => r.week_start))).sort();
-    const n = window === "all" ? all.length : Math.min(all.length, Number(window));
-    return all.slice(-n);
-  }, [rows, window]);
+    if (range.preset === "all") return all;
+    if (range.preset === "custom" && range.from && range.to) return all.filter(w => w >= range.from! && w <= range.to!);
+    const n = Number(range.preset);
+    return Number.isFinite(n) ? all.slice(-n) : all;
+  }, [rows, range]);
 
   const byKpi = useMemo(() => {
     const m = new Map<string, Map<string, number | null>>();
@@ -92,16 +94,7 @@ function AnalyticsPage() {
           <h1 className="font-display text-3xl font-semibold">Operations Analytics</h1>
           <p className="text-sm text-muted-foreground mt-1">Per-KPI trends, heatmap and smart insights across your weekly reports.</p>
         </div>
-        <Select value={window} onValueChange={setWindow}>
-          <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="4">Last 4 weeks</SelectItem>
-            <SelectItem value="8">Last 8 weeks</SelectItem>
-            <SelectItem value="12">Last 12 weeks</SelectItem>
-            <SelectItem value="26">Last 26 weeks</SelectItem>
-            <SelectItem value="all">All time</SelectItem>
-          </SelectContent>
-        </Select>
+        <DateRangeSelect value={range} onChange={setRange} />
       </header>
 
       {loading && (
@@ -209,19 +202,23 @@ function AnalyticsPage() {
               const color = statusColor(status);
               const gradId = `g-${t.kpi_key}`;
               return (
-                <Card key={t.id} className="p-5">
-                  <div className="flex items-start justify-between mb-3">
+                <Card key={t.id} className="p-5 relative overflow-hidden group hover:shadow-lg transition-shadow">
+                  <div
+                    className="absolute inset-0 opacity-[0.04] pointer-events-none"
+                    style={{ background: `radial-gradient(120% 60% at 50% 0%, ${color}, transparent)` }}
+                  />
+                  <div className="flex items-start justify-between mb-3 relative">
                     <div className="min-w-0">
-                      <div className="text-xs text-muted-foreground uppercase tracking-wide">{t.owner ?? t.cadence}</div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-widest">{t.owner ?? t.cadence}</div>
                       <div className="font-medium truncate">{t.label}</div>
                       <div className="text-xs text-muted-foreground mt-0.5">Target: {t.target_display ?? "—"}</div>
                     </div>
                     <div className="text-right shrink-0">
-                      <div className="text-2xl font-display font-semibold">{formatKpi(latest, t)}</div>
-                      <div className="flex items-center gap-1 justify-end mt-1">
+                      <div className="text-3xl font-display font-bold" style={{ color }}>{formatKpi(latest, t)}</div>
+                      <div className="flex items-center gap-1.5 justify-end mt-1">
                         <StatusPill status={status} />
                         {change != null && (
-                          <span className={cn("text-xs font-medium inline-flex items-center gap-0.5", improving ? "text-success" : "text-destructive")}>
+                          <span className={cn("text-xs font-semibold inline-flex items-center gap-0.5", improving ? "text-success" : "text-destructive")}>
                             {improving ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                             {Math.abs(change).toFixed(1)}%
                           </span>
@@ -229,23 +226,40 @@ function AnalyticsPage() {
                       </div>
                     </div>
                   </div>
-                  <ResponsiveContainer width="100%" height={160}>
-                    <AreaChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
+                  <ResponsiveContainer width="100%" height={180}>
+                    <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
                       <defs>
                         <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor={color} stopOpacity={0.35} />
+                          <stop offset="0%" stopColor={color} stopOpacity={0.55} />
+                          <stop offset="60%" stopColor={color} stopOpacity={0.12} />
                           <stop offset="100%" stopColor={color} stopOpacity={0} />
                         </linearGradient>
+                        <filter id={`glow-${t.kpi_key}`} x="-20%" y="-20%" width="140%" height="140%">
+                          <feGaussianBlur stdDeviation="2" result="blur" />
+                          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                        </filter>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <CartesianGrid strokeDasharray="2 4" stroke="var(--border)" opacity={0.5} vertical={false} />
                       <XAxis dataKey="week" stroke="var(--muted-foreground)" fontSize={10} tickLine={false} axisLine={false} />
-                      <YAxis stroke="var(--muted-foreground)" fontSize={10} tickLine={false} axisLine={false} width={40} />
+                      <YAxis stroke="var(--muted-foreground)" fontSize={10} tickLine={false} axisLine={false} width={36} />
                       <Tooltip
-                        contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
+                        cursor={{ stroke: color, strokeOpacity: 0.3, strokeWidth: 1 }}
+                        contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 10, fontSize: 12, boxShadow: "0 12px 32px -12px rgba(0,0,0,0.2)" }}
                         formatter={(v: any) => [v != null ? formatKpi(Number(v), t) : "—", t.label]}
                       />
-                      <ReferenceLine y={t.green_min} stroke="hsl(var(--success))" strokeDasharray="4 4" strokeOpacity={0.5} />
-                      <Area type="monotone" dataKey="value" stroke={color} strokeWidth={2} fill={`url(#${gradId})`} connectNulls isAnimationActive />
+                      <ReferenceLine y={t.green_min} stroke="hsl(var(--success))" strokeDasharray="4 4" strokeOpacity={0.5} label={{ value: "target", fontSize: 9, fill: "var(--muted-foreground)", position: "right" }} />
+                      <Area
+                        type="monotone"
+                        dataKey="value"
+                        stroke={color}
+                        strokeWidth={2.5}
+                        fill={`url(#${gradId})`}
+                        connectNulls
+                        isAnimationActive
+                        animationDuration={800}
+                        dot={{ r: 2.5, fill: color, strokeWidth: 0 }}
+                        activeDot={{ r: 5, fill: color, stroke: "var(--card)", strokeWidth: 2, filter: `url(#glow-${t.kpi_key})` }}
+                      />
                     </AreaChart>
                   </ResponsiveContainer>
                 </Card>
