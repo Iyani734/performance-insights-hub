@@ -437,6 +437,50 @@ export type Database = {
           },
         ]
       }
+      upload_delete_requests: {
+        Row: {
+          created_at: string
+          id: string
+          reason: string | null
+          requested_by: string
+          requested_by_name: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          status: string
+          upload_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          reason?: string | null
+          requested_by: string
+          requested_by_name?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+          upload_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          reason?: string | null
+          requested_by?: string
+          requested_by_name?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+          upload_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "upload_delete_requests_upload_id_fkey"
+            columns: ["upload_id"]
+            isOneToOne: false
+            referencedRelation: "report_uploads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_roles: {
         Row: {
           created_at: string
