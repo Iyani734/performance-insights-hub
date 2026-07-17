@@ -12,16 +12,20 @@ import { toast } from "sonner";
 import { downloadXlsx } from "@/lib/parse";
 import { formatWeek } from "@/lib/kpi";
 import { useAuth } from "@/lib/useAuth";
+import { isDemoMode } from "@/lib/demoMode";
+import { DEMO_WEEKS, demoCustomers, demoEmailJobs, demoOpenJobs } from "@/lib/demoData";
 
 export const Route = createFileRoute("/_authenticated/emails")({ component: EmailsPage });
 
 function EmailsPage() {
   const qc = useQueryClient();
   const { user } = useAuth();
+  const demoMode = isDemoMode();
 
   const weeksQ = useQuery({
-    queryKey: ["oj_weeks"],
+    queryKey: ["oj_weeks", demoMode],
     queryFn: async () => {
+      if (demoMode) return DEMO_WEEKS;
       const { data } = await supabase.from("open_jobs").select("week_start").order("week_start", { ascending: false });
       return Array.from(new Set((data ?? []).map((r: any) => r.week_start as string)));
     },
@@ -30,9 +34,10 @@ function EmailsPage() {
   const w = week ?? weeksQ.data?.[0] ?? null;
 
   const jobsQ = useQuery({
-    queryKey: ["oj_for_emails", w],
+    queryKey: ["oj_for_emails", w, demoMode],
     queryFn: async () => {
       if (!w) return [];
+      if (demoMode) return demoOpenJobs(w);
       const { data } = await supabase.from("open_jobs").select("*").eq("week_start", w);
       return data ?? [];
     },
@@ -40,14 +45,15 @@ function EmailsPage() {
   });
 
   const custsQ = useQuery({
-    queryKey: ["customers"],
-    queryFn: async () => (await supabase.from("customers").select("*")).data ?? [],
+    queryKey: ["customers", demoMode],
+    queryFn: async () => demoMode ? demoCustomers() : (await supabase.from("customers").select("*")).data ?? [],
   });
 
   const emailJobsQ = useQuery({
-    queryKey: ["email_jobs", w],
+    queryKey: ["email_jobs", w, demoMode],
     queryFn: async () => {
       if (!w) return [];
+      if (demoMode) return demoEmailJobs(w);
       const { data } = await supabase.from("email_jobs").select("*").eq("week_start", w).order("created_at", { ascending: false });
       return data ?? [];
     },

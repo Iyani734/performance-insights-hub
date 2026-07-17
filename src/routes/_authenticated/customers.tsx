@@ -13,6 +13,8 @@ import { toast } from "sonner";
 import { Plus, Pencil, Trash2, Mail, X } from "lucide-react";
 import { useAuth } from "@/lib/useAuth";
 import { z } from "zod";
+import { isDemoMode } from "@/lib/demoMode";
+import { DEMO_CURRENT_WEEK, demoCustomers, demoOpenJobs } from "@/lib/demoData";
 
 export const Route = createFileRoute("/_authenticated/customers")({ component: CustomersPage });
 
@@ -28,19 +30,25 @@ const empty: FormState = { key: "", name: "", email: "", cc: [], enabled: true }
 function CustomersPage() {
   const qc = useQueryClient();
   const { role, user } = useAuth();
+  const demoMode = isDemoMode();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
   const [form, setForm] = useState<FormState>(empty);
   const [ccInput, setCcInput] = useState("");
 
   const custsQ = useQuery({
-    queryKey: ["customers"],
-    queryFn: async () => ((await supabase.from("customers").select("*").order("name")).data ?? []),
+    queryKey: ["customers", demoMode],
+    queryFn: async () => demoMode ? demoCustomers() : ((await supabase.from("customers").select("*").order("name")).data ?? []),
   });
 
   const jobsCountQ = useQuery({
-    queryKey: ["customers_active_jobs"],
+    queryKey: ["customers_active_jobs", demoMode],
     queryFn: async () => {
+      if (demoMode) {
+        const map: Record<string, number> = {};
+        for (const r of demoOpenJobs(DEMO_CURRENT_WEEK)) map[r.customer_key] = (map[r.customer_key] ?? 0) + 1;
+        return map;
+      }
       const { data: latest } = await supabase.from("open_jobs").select("week_start").order("week_start", { ascending: false }).limit(1);
       const week = latest?.[0]?.week_start;
       if (!week) return {} as Record<string, number>;

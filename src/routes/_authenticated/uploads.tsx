@@ -14,6 +14,8 @@ import { UploadCloud, FileSpreadsheet, Trash2, CheckCircle2, AlertTriangle, Down
 import { formatWeek } from "@/lib/kpi";
 import { readWorkbook, parseTicketsSheet, parseOpenJobsSheet } from "@/lib/parse";
 import { useAuth } from "@/lib/useAuth";
+import { isDemoMode } from "@/lib/demoMode";
+import { demoUploads } from "@/lib/demoData";
 
 export const Route = createFileRoute("/_authenticated/uploads")({ component: UploadsPage });
 
@@ -27,6 +29,7 @@ const DEMO_UPLOADERS = ["Ian", "Yvette"];
 function UploadsPage() {
   const qc = useQueryClient();
   const { user, role } = useAuth();
+  const demoMode = isDemoMode();
   const isAdmin = role === "admin";
   const [kind, setKind] = useState<(typeof KINDS)[number]["value"]>("total_tickets");
   const [week, setWeek] = useState<string>("2027-05-24");
@@ -35,18 +38,18 @@ function UploadsPage() {
   const [deleteReason, setDeleteReason] = useState("");
 
   const uploadsQ = useQuery({
-    queryKey: ["uploads"],
-    queryFn: async () => (await supabase.from("report_uploads").select("*").order("created_at", { ascending: false }).limit(50)).data ?? [],
+    queryKey: ["uploads", demoMode],
+    queryFn: async () => demoMode ? demoUploads() : (await supabase.from("report_uploads").select("*").order("created_at", { ascending: false }).limit(50)).data ?? [],
   });
 
   const profilesQ = useQuery({
-    queryKey: ["profiles_all"],
-    queryFn: async () => (await supabase.from("profiles").select("id,full_name,email")).data ?? [],
+    queryKey: ["profiles_all", demoMode],
+    queryFn: async () => demoMode ? [] : (await supabase.from("profiles").select("id,full_name,email")).data ?? [],
   });
 
   const requestsQ = useQuery({
-    queryKey: ["delete_requests"],
-    queryFn: async () => (await supabase.from("upload_delete_requests").select("*").order("created_at", { ascending: false })).data ?? [],
+    queryKey: ["delete_requests", demoMode],
+    queryFn: async () => demoMode ? [] : (await supabase.from("upload_delete_requests").select("*").order("created_at", { ascending: false })).data ?? [],
   });
 
   const profileMap = useMemo(() => {

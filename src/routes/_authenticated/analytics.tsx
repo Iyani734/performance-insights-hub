@@ -9,6 +9,8 @@ import { StatusPill } from "@/components/StatusPill";
 import { cn } from "@/lib/utils";
 import { TrendingUp, TrendingDown, Minus, BarChart3, Grid3x3, Sparkles } from "lucide-react";
 import { DateRangeSelect, type DateRange } from "@/components/DateRangeSelect";
+import { isDemoMode } from "@/lib/demoMode";
+import { DEMO_TARGETS, demoKpiValues } from "@/lib/demoData";
 
 export const Route = createFileRoute("/_authenticated/analytics")({ component: AnalyticsPage });
 
@@ -34,15 +36,16 @@ function statusBg(s: KpiStatus): string {
 
 function AnalyticsPage() {
   const [range, setRange] = useState<DateRange>({ preset: "12" });
+  const demoMode = isDemoMode();
 
   const targetsQ = useQuery({
-    queryKey: ["kpi_targets"],
-    queryFn: async () => ((await supabase.from("kpi_targets").select("*").order("sort_order")).data ?? []) as KpiTarget[],
+    queryKey: ["kpi_targets", demoMode],
+    queryFn: async () => demoMode ? DEMO_TARGETS : ((await supabase.from("kpi_targets").select("*").order("sort_order")).data ?? []) as KpiTarget[],
   });
 
   const valuesQ = useQuery({
-    queryKey: ["kpi_values_all"],
-    queryFn: async () => ((await supabase.from("kpi_values").select("kpi_key,week_start,actual").order("week_start")).data ?? []) as Row[],
+    queryKey: ["kpi_values_all", demoMode],
+    queryFn: async () => demoMode ? demoKpiValues() as Row[] : ((await supabase.from("kpi_values").select("kpi_key,week_start,actual").order("week_start")).data ?? []) as Row[],
   });
 
   const targets = targetsQ.data ?? [];

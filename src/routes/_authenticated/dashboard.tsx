@@ -15,6 +15,8 @@ import { Ticket, CheckCircle2, AlertTriangle, DollarSign, ChevronLeft, ChevronRi
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/useAuth";
+import { isDemoMode } from "@/lib/demoMode";
+import { DEMO_TARGETS, demoAutoKpis, demoEmailStats, demoKpiValues, demoNotes, demoUploads, DEMO_WEEKS } from "@/lib/demoData";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({ component: Dashboard });
 
@@ -35,7 +37,8 @@ function Dashboard() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { user } = useAuth();
-  const weeksQ = useQuery({ queryKey: ["weeks"], queryFn: fetchWeeks });
+  const demoMode = isDemoMode();
+  const weeksQ = useQuery({ queryKey: ["weeks", demoMode], queryFn: () => demoMode ? Promise.resolve(DEMO_WEEKS) : fetchWeeks() });
   const [selectedWeek, setSelectedWeek] = useState<string | null>(null);
   const weeks = weeksQ.data ?? [];
   const week = selectedWeek ?? weeks[0] ?? weekStartOf(new Date());
@@ -43,27 +46,30 @@ function Dashboard() {
   const prevWeek = idx >= 0 && idx < weeks.length - 1 ? weeks[idx + 1] : null;
 
   const targetsQ = useQuery({
-    queryKey: ["kpi_targets"],
-    queryFn: async () => ((await supabase.from("kpi_targets").select("*").order("sort_order")).data ?? []) as KpiTarget[],
+    queryKey: ["kpi_targets", demoMode],
+    queryFn: async () => demoMode ? DEMO_TARGETS : ((await supabase.from("kpi_targets").select("*").order("sort_order")).data ?? []) as KpiTarget[],
   });
 
-  const autoQ = useQuery({ queryKey: ["auto_kpi", week], queryFn: () => computeAutoKpis(week), enabled: !!week });
-  const autoPrevQ = useQuery({ queryKey: ["auto_kpi", prevWeek], queryFn: () => computeAutoKpis(prevWeek!), enabled: !!prevWeek });
+  const autoQ = useQuery({ queryKey: ["auto_kpi", week, demoMode], queryFn: () => demoMode ? demoAutoKpis(week) : computeAutoKpis(week), enabled: !!week });
+  const autoPrevQ = useQuery({ queryKey: ["auto_kpi", prevWeek, demoMode], queryFn: () => demoMode ? demoAutoKpis(prevWeek!) : computeAutoKpis(prevWeek!), enabled: !!prevWeek });
 
   const valuesQ = useQuery({
-    queryKey: ["kpi_values_pair", week, prevWeek],
-    queryFn: () => fetchValuesForWeeks([week, prevWeek].filter(Boolean) as string[]),
+    queryKey: ["kpi_values_pair", week, prevWeek, demoMode],
+    queryFn: () => demoMode
+      ? Promise.resolve(demoKpiValues().filter((v: any) => [week, prevWeek].filter(Boolean).includes(v.week_start)))
+      : fetchValuesForWeeks([week, prevWeek].filter(Boolean) as string[]),
     enabled: !!week,
   });
 
   const trendsQ = useQuery({
-    queryKey: ["kpi_trends"],
-    queryFn: async () => (await supabase.from("kpi_values").select("kpi_key,week_start,actual").order("week_start")).data ?? [],
+    queryKey: ["kpi_trends", demoMode],
+    queryFn: async () => demoMode ? demoKpiValues() : (await supabase.from("kpi_values").select("kpi_key,week_start,actual").order("week_start")).data ?? [],
   });
 
   const emailStatsQ = useQuery({
-    queryKey: ["email_stats", week],
+    queryKey: ["email_stats", week, demoMode],
     queryFn: async () => {
+      if (demoMode) return demoEmailStats();
       const { data } = await supabase.from("email_jobs").select("status").eq("week_start", week);
       const rows = data ?? [];
       return {
@@ -77,13 +83,13 @@ function Dashboard() {
   });
 
   const lastUploadQ = useQuery({
-    queryKey: ["last_upload"],
-    queryFn: async () => (await supabase.from("report_uploads").select("created_at,kind").order("created_at", { ascending: false }).limit(1)).data?.[0],
+    queryKey: ["last_upload", demoMode],
+    queryFn: async () => demoMode ? demoUploads()[0] : (await supabase.from("report_uploads").select("created_at,kind").order("created_at", { ascending: false }).limit(1)).data?.[0],
   });
 
   const notesQ = useQuery({
-    queryKey: ["kpi_notes", week],
-    queryFn: async () => (await supabase.from("kpi_notes").select("*").eq("week_start", week).order("created_at", { ascending: false })).data ?? [],
+    queryKey: ["kpi_notes", week, demoMode],
+    queryFn: async () => demoMode ? demoNotes(week) : (await supabase.from("kpi_notes").select("*").eq("week_start", week).order("created_at", { ascending: false })).data ?? [],
     enabled: !!week,
   });
 

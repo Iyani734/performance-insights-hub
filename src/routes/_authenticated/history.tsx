@@ -15,6 +15,8 @@ import { Input } from "@/components/ui/input";
 import { downloadXlsx } from "@/lib/parse";
 import { toast } from "sonner";
 import { DateRangeSelect, type DateRange } from "@/components/DateRangeSelect";
+import { isDemoMode } from "@/lib/demoMode";
+import { DEMO_TARGETS, demoKpiValues, demoUploads } from "@/lib/demoData";
 
 export const Route = createFileRoute("/_authenticated/history")({ component: HistoryPage });
 
@@ -35,20 +37,21 @@ const SERIES_COLORS = [
 function HistoryPage() {
   const [range, setRange] = useState<DateRange>({ preset: "12" });
   const [search, setSearch] = useState("");
+  const demoMode = isDemoMode();
 
   const targetsQ = useQuery({
-    queryKey: ["kpi_targets"],
-    queryFn: async () => ((await supabase.from("kpi_targets").select("*").order("sort_order")).data ?? []) as KpiTarget[],
+    queryKey: ["kpi_targets", demoMode],
+    queryFn: async () => demoMode ? DEMO_TARGETS : ((await supabase.from("kpi_targets").select("*").order("sort_order")).data ?? []) as KpiTarget[],
   });
 
   const valuesQ = useQuery({
-    queryKey: ["kpi_values_all"],
-    queryFn: async () => ((await supabase.from("kpi_values").select("*").order("week_start", { ascending: false })).data ?? []),
+    queryKey: ["kpi_values_all", demoMode],
+    queryFn: async () => demoMode ? [...demoKpiValues()].sort((a, b) => b.week_start.localeCompare(a.week_start)) : ((await supabase.from("kpi_values").select("*").order("week_start", { ascending: false })).data ?? []),
   });
 
   const uploadsQ = useQuery({
-    queryKey: ["uploads_history"],
-    queryFn: async () => ((await supabase.from("report_uploads").select("*").order("created_at", { ascending: false }).limit(200)).data ?? []),
+    queryKey: ["uploads_history", demoMode],
+    queryFn: async () => demoMode ? demoUploads() : ((await supabase.from("report_uploads").select("*").order("created_at", { ascending: false }).limit(200)).data ?? []),
   });
 
   const targets = targetsQ.data ?? [];

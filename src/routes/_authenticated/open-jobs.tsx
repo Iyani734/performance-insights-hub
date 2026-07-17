@@ -10,6 +10,8 @@ import { Download, Search, Briefcase } from "lucide-react";
 import { downloadXlsx } from "@/lib/parse";
 import { formatWeek } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
+import { isDemoMode } from "@/lib/demoMode";
+import { DEMO_WEEKS, demoOpenJobs } from "@/lib/demoData";
 
 export const Route = createFileRoute("/_authenticated/open-jobs")({ component: OpenJobsPage });
 
@@ -39,9 +41,11 @@ function ageBadge(age: number | null | undefined) {
 }
 
 function OpenJobsPage() {
+  const demoMode = isDemoMode();
   const weeksQ = useQuery({
-    queryKey: ["open_jobs_weeks"],
+    queryKey: ["open_jobs_weeks", demoMode],
     queryFn: async () => {
+      if (demoMode) return DEMO_WEEKS;
       const { data } = await supabase.from("open_jobs").select("week_start").order("week_start", { ascending: false });
       return Array.from(new Set((data ?? []).map((r: any) => r.week_start as string)));
     },
@@ -50,9 +54,10 @@ function OpenJobsPage() {
   const selectedWeek = week ?? weeksQ.data?.[0] ?? null;
 
   const jobsQ = useQuery({
-    queryKey: ["open_jobs", selectedWeek],
+    queryKey: ["open_jobs", selectedWeek, demoMode],
     queryFn: async () => {
       if (!selectedWeek) return [];
+      if (demoMode) return demoOpenJobs(selectedWeek);
       const { data } = await supabase.from("open_jobs").select("*").eq("week_start", selectedWeek).order("customer_name");
       return data ?? [];
     },
