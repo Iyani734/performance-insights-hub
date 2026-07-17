@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { computeStatus, formatKpi, formatWeek, type KpiTarget } from "@/lib/kpi";
 import { deltaPct } from "@/lib/summary";
 import { StatusPill } from "@/components/StatusPill";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download, ArrowUp, ArrowDown, Minus, Search } from "lucide-react";
