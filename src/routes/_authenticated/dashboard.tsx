@@ -262,11 +262,14 @@ function Dashboard() {
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">{commentary(r)}</p>
-                <button onClick={() => { setEditingKpi(r.target); setEditValue(r.actual != null ? String(r.actual) : ""); }}
-                  className="mt-2 text-xs text-primary hover:underline inline-flex items-center gap-1">
-                  <Pencil className="w-3 h-3" />{r.actual == null ? "Enter value" : "Update value"}
-                </button>
-                {r.target.auto && <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">auto</span>}
+                {r.target.auto ? (
+                  <span className="mt-2 inline-block text-[10px] text-muted-foreground uppercase tracking-wide">Auto-calculated</span>
+                ) : (
+                  <button onClick={() => { setEditingKpi(r.target); setEditValue(r.actual != null ? String(r.actual) : ""); }}
+                    className="mt-2 text-xs text-primary hover:underline inline-flex items-center gap-1">
+                    <Pencil className="w-3 h-3" />{r.actual == null ? "Enter value" : "Update value"}
+                  </button>
+                )}
               </div>
             );
           })}
