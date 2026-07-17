@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { computeStatus, formatKpi, formatWeek, type KpiTarget } from "@/lib/kpi";
 import { deltaPct } from "@/lib/summary";
 import { StatusPill } from "@/components/StatusPill";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download, ArrowUp, ArrowDown, Minus, Search } from "lucide-react";
@@ -190,25 +190,22 @@ function HistoryPage() {
               </div>
             </div>
             <ResponsiveContainer width="100%" height={320}>
-              <LineChart data={chartData} margin={{ top: 8, right: 16, left: -8, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="week" stroke="var(--muted-foreground)" fontSize={12} />
-                <YAxis stroke="var(--muted-foreground)" fontSize={12} />
-                <Tooltip contentStyle={{ borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }} />
+              <BarChart data={chartData} margin={{ top: 8, right: 16, left: -8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                <XAxis dataKey="week" stroke="var(--muted-foreground)" fontSize={12} tickLine={false} axisLine={false} />
+                <YAxis stroke="var(--muted-foreground)" fontSize={12} tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={{ borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }} cursor={{ fill: "var(--muted)", opacity: 0.3 }} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
                 {targets.map((t, i) => displayedKpis.includes(t.kpi_key) && (
-                  <Line
+                  <Bar
                     key={t.id}
-                    type="monotone"
                     dataKey={t.label}
-                    stroke={SERIES_COLORS[i % SERIES_COLORS.length]}
-                    strokeWidth={2}
-                    connectNulls
-                    dot={{ r: 3 }}
-                    activeDot={{ r: 5 }}
+                    fill={SERIES_COLORS[i % SERIES_COLORS.length]}
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={28}
                   />
                 ))}
-              </LineChart>
+              </BarChart>
             </ResponsiveContainer>
           </Card>
 
