@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { UploadCloud, FileSpreadsheet, Trash2, CheckCircle2, AlertTriangle, Download, Check, X, ShieldAlert, User as UserIcon } from "lucide-react";
-import { formatWeek, weekStartOf } from "@/lib/kpi";
+import { formatWeek } from "@/lib/kpi";
 import { readWorkbook, parseTicketsSheet, parseOpenJobsSheet } from "@/lib/parse";
 import { useAuth } from "@/lib/useAuth";
 
@@ -22,13 +22,14 @@ const KINDS = [
   { value: "total_invoiced", label: "Total Invoiced" },
   { value: "open_jobs", label: "Open Jobs" },
 ] as const;
+const DEMO_UPLOADERS = ["Ian", "Yvette"];
 
 function UploadsPage() {
   const qc = useQueryClient();
   const { user, role } = useAuth();
   const isAdmin = role === "admin";
   const [kind, setKind] = useState<(typeof KINDS)[number]["value"]>("total_tickets");
-  const [week, setWeek] = useState<string>(weekStartOf(new Date()));
+  const [week, setWeek] = useState<string>("2027-05-24");
   const [file, setFile] = useState<File | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
@@ -166,6 +167,13 @@ function UploadsPage() {
         <p className="text-sm text-muted-foreground mt-1">Upload Total Tickets, Total Invoiced, or Open Jobs exports.</p>
       </header>
 
+      <Card className="p-6 border-dashed bg-muted/20">
+        <div className="flex min-h-[76px] items-center justify-center text-sm font-medium text-muted-foreground">
+          Next update
+        </div>
+      </Card>
+
+      {/*
       <Card className="p-6">
         <div className="grid md:grid-cols-4 gap-4">
           <div className="space-y-2">
@@ -191,6 +199,7 @@ function UploadsPage() {
           {file && <span className="text-sm text-muted-foreground">{file.name}</span>}
         </div>
       </Card>
+      */}
 
       {isAdmin && pendingCount > 0 && (
         <Card className="p-6 border-warning/40 bg-warning/5">
@@ -242,8 +251,9 @@ function UploadsPage() {
               </tr>
             </thead>
             <tbody>
-              {(uploadsQ.data ?? []).map((u: any) => {
+              {(uploadsQ.data ?? []).map((u: any, index: number) => {
                 const uploader = u.uploaded_by ? profileMap.get(u.uploaded_by) : null;
+                const uploaderName = uploader?.name ?? (u.file_name?.startsWith("demo-") ? DEMO_UPLOADERS[index % DEMO_UPLOADERS.length] : "Unknown");
                 const pending = pendingByUpload.get(u.id);
                 const isMine = user?.id === u.uploaded_by;
                 return (
@@ -252,9 +262,9 @@ function UploadsPage() {
                     <td className="px-4 py-2.5 whitespace-nowrap">
                       <span className="inline-flex items-center gap-1.5">
                         <span className="w-6 h-6 rounded-full bg-primary/15 text-primary flex items-center justify-center text-[10px] font-semibold">
-                          {(uploader?.name ?? "?").slice(0, 1).toUpperCase()}
+                          {uploaderName.slice(0, 1).toUpperCase()}
                         </span>
-                        <span className="font-medium">{uploader?.name ?? "Unknown"}</span>
+                        <span className="font-medium">{uploaderName}</span>
                       </span>
                     </td>
                     <td className="px-4 py-2.5"><span className="inline-flex items-center gap-1.5"><FileSpreadsheet className="w-4 h-4 text-primary" />{KINDS.find(k => k.value === u.kind)?.label ?? u.kind}</span></td>

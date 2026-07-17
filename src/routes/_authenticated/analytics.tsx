@@ -14,6 +14,17 @@ export const Route = createFileRoute("/_authenticated/analytics")({ component: A
 
 type Row = { kpi_key: string; week_start: string; actual: number | null };
 
+const TREND_COLORS = [
+  "#0f766e",
+  "#2563eb",
+  "#7c3aed",
+  "#db2777",
+  "#ea580c",
+  "#16a34a",
+  "#0891b2",
+  "#9333ea",
+];
+
 function statusColor(s: KpiStatus): string {
   return s === "green" ? "hsl(var(--success))" : s === "yellow" ? "hsl(var(--warning))" : s === "red" ? "hsl(var(--destructive))" : "hsl(var(--muted-foreground))";
 }
@@ -191,7 +202,7 @@ function AnalyticsPage() {
 
           {/* Per-KPI trend charts */}
           <div className="grid md:grid-cols-2 gap-4">
-            {targets.map(t => {
+            {targets.map((t, index) => {
               const data = weeks.map(w => ({ week: formatWeek(w).replace(/,.*/, ""), value: byKpi.get(t.kpi_key)?.get(w) ?? null }));
               const latest = [...data].reverse().find(d => d.value != null)?.value ?? null;
               const status = computeStatus(latest, t);
@@ -199,14 +210,12 @@ function AnalyticsPage() {
               const first = values[0], last = values[values.length - 1];
               const change = values.length >= 2 ? ((last - first) / Math.abs(first || 1)) * 100 : null;
               const improving = change == null ? null : t.direction === "lower_is_better" ? change < 0 : change > 0;
-              const isNegativeMetric = t.direction === "lower_is_better";
-              const lineColor = isNegativeMetric ? "#ef4444" : "#22d3ee";
+              const lineColor = TREND_COLORS[index % TREND_COLORS.length];
               const gradId = `g-${t.kpi_key}`;
               return (
                 <Card
                   key={t.id}
-                  className="p-5 relative overflow-hidden group border-border/60"
-                  style={{ background: "linear-gradient(180deg, hsl(220 30% 8%), hsl(220 25% 6%))" }}
+                  className="p-5 relative overflow-hidden group border-border/70 bg-card shadow-sm"
                 >
                   <div className="flex items-start justify-between mb-2 relative">
                     <div className="min-w-0">
@@ -230,16 +239,16 @@ function AnalyticsPage() {
                     <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
                       <defs>
                         <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor={lineColor} stopOpacity={isNegativeMetric ? 0.35 : 0.5} />
+                          <stop offset="0%" stopColor={lineColor} stopOpacity={0.24} />
                           <stop offset="100%" stopColor={lineColor} stopOpacity={0} />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 15% 25%)" opacity={0.4} />
-                      <XAxis dataKey="week" stroke="hsl(220 10% 55%)" fontSize={10} tickLine={false} axisLine={false} />
-                      <YAxis stroke="hsl(220 10% 55%)" fontSize={10} tickLine={false} axisLine={false} width={44} />
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 14% 86%)" opacity={0.8} />
+                      <XAxis dataKey="week" stroke="hsl(220 10% 44%)" fontSize={10} tickLine={false} axisLine={false} />
+                      <YAxis stroke="hsl(220 10% 44%)" fontSize={10} tickLine={false} axisLine={false} width={44} />
                       <Tooltip
                         cursor={{ stroke: lineColor, strokeOpacity: 0.4, strokeWidth: 1 }}
-                        contentStyle={{ background: "hsl(220 30% 10%)", border: "1px solid hsl(220 15% 25%)", borderRadius: 8, fontSize: 12 }}
+                        contentStyle={{ background: "hsl(0 0% 100%)", color: "hsl(220 25% 16%)", border: "1px solid hsl(220 14% 86%)", borderRadius: 8, fontSize: 12 }}
                         formatter={(v: any) => [v != null ? formatKpi(Number(v), t) : "—", t.label]}
                       />
                       <Area
@@ -252,7 +261,7 @@ function AnalyticsPage() {
                         isAnimationActive
                         animationDuration={800}
                         dot={false}
-                        activeDot={{ r: 4, fill: lineColor, stroke: "hsl(220 30% 8%)", strokeWidth: 2 }}
+                        activeDot={{ r: 4, fill: lineColor, stroke: "hsl(0 0% 100%)", strokeWidth: 2 }}
                       />
                     </AreaChart>
                   </ResponsiveContainer>

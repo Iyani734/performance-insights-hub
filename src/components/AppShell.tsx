@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/useAuth";
+import { disableDemoMode, isDemoMode } from "@/lib/demoMode";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
@@ -45,12 +46,14 @@ function SidebarInner({
   const router = useRouter();
   const qc = useQueryClient();
   const { user, role } = useAuth();
+  const demoMode = !user && isDemoMode();
 
   async function signOut() {
     await qc.cancelQueries();
     qc.clear();
+    disableDemoMode();
     await supabase.auth.signOut();
-    router.navigate({ to: "/auth", replace: true });
+    router.navigate({ to: demoMode ? "/" : "/auth", replace: true });
   }
 
   return (
@@ -110,7 +113,7 @@ function SidebarInner({
         {!collapsed ? (
           <>
             <div className="text-xs text-sidebar-foreground/60 mb-2 truncate">
-              {user?.email}
+              {demoMode ? "Demo viewer" : user?.email}
             </div>
             <div className="text-xs uppercase tracking-wide mb-3">
               <span
@@ -121,7 +124,7 @@ function SidebarInner({
                     : "bg-sidebar-accent"
                 )}
               >
-                {role ?? "..."}
+                {demoMode ? "demo" : role ?? "..."}
               </span>
             </div>
             <Button
@@ -131,7 +134,7 @@ function SidebarInner({
               className="w-full justify-start text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-foreground"
             >
               <LogOut className="w-4 h-4 mr-2" />
-              Sign out
+              {demoMode ? "Exit demo" : "Sign out"}
             </Button>
           </>
         ) : (
@@ -139,7 +142,7 @@ function SidebarInner({
             variant="ghost"
             size="icon"
             onClick={signOut}
-            title="Sign out"
+            title={demoMode ? "Exit demo" : "Sign out"}
             className="w-full text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-foreground"
           >
             <LogOut className="w-4 h-4" />

@@ -5,11 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Activity, Sparkles, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
+import { enableDemoMode } from "@/lib/demoMode";
 
 export const Route = createFileRoute("/")({ component: Landing });
-
-const DEMO_EMAIL = "demo@perftracker.app";
-const DEMO_PASSWORD = "demo-tracker-2026";
 
 function Landing() {
   const router = useRouter();
@@ -25,12 +23,9 @@ function Landing() {
   async function enterDemo() {
     setBusy(true);
     try {
-      let res = await supabase.auth.signInWithPassword({ email: DEMO_EMAIL, password: DEMO_PASSWORD });
-      if (res.error) {
-        await supabase.auth.signUp({ email: DEMO_EMAIL, password: DEMO_PASSWORD, options: { data: { full_name: "Demo Viewer" } } });
-        res = await supabase.auth.signInWithPassword({ email: DEMO_EMAIL, password: DEMO_PASSWORD });
-        if (res.error) throw res.error;
-      }
+      enableDemoMode();
+      const demoSeed = await supabase.rpc("ensure_demo_data");
+      if (demoSeed.error) console.warn("Demo data refresh failed:", demoSeed.error.message);
       router.navigate({ to: "/dashboard", replace: true });
     } catch (err: any) {
       toast.error(err.message ?? "Could not load demo");
