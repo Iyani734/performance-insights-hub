@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { computeStatus, formatKpi, formatWeek, type KpiTarget } from "@/lib/kpi";
 import { deltaPct } from "@/lib/summary";
 import { StatusPill } from "@/components/StatusPill";
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download, ArrowUp, ArrowDown, Minus, Search } from "lucide-react";
@@ -190,34 +190,25 @@ function HistoryPage() {
               </div>
             </div>
             <ResponsiveContainer width="100%" height={320}>
-              <AreaChart data={chartData} margin={{ top: 8, right: 16, left: -8, bottom: 0 }}>
-                <defs>
-                  {targets.map((t, i) => (
-                    <linearGradient key={t.id} id={`grad-${t.kpi_key}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={SERIES_COLORS[i % SERIES_COLORS.length]} stopOpacity={0.35} />
-                      <stop offset="100%" stopColor={SERIES_COLORS[i % SERIES_COLORS.length]} stopOpacity={0} />
-                    </linearGradient>
-                  ))}
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.5} />
-                <XAxis dataKey="week" stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} />
-                <YAxis stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", background: "var(--card)", boxShadow: "0 8px 24px -12px rgba(0,0,0,0.15)" }} />
-                <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" />
+              <LineChart data={chartData} margin={{ top: 8, right: 16, left: -8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                <XAxis dataKey="week" stroke="var(--muted-foreground)" fontSize={12} />
+                <YAxis stroke="var(--muted-foreground)" fontSize={12} />
+                <Tooltip contentStyle={{ borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }} />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
                 {targets.map((t, i) => displayedKpis.includes(t.kpi_key) && (
-                  <Area
+                  <Line
                     key={t.id}
                     type="monotone"
                     dataKey={t.label}
                     stroke={SERIES_COLORS[i % SERIES_COLORS.length]}
-                    strokeWidth={2.5}
-                    fill={`url(#grad-${t.kpi_key})`}
+                    strokeWidth={2}
                     connectNulls
-                    dot={{ r: 3, strokeWidth: 0 }}
+                    dot={{ r: 3 }}
                     activeDot={{ r: 5 }}
                   />
                 ))}
-              </AreaChart>
+              </LineChart>
             </ResponsiveContainer>
           </Card>
 
