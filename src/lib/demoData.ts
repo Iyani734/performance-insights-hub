@@ -1,7 +1,47 @@
 import type { KpiTarget } from "@/lib/kpi";
 
-export const DEMO_CURRENT_WEEK = "2026-05-24";
-export const DEMO_WEEKS = ["2026-05-24", "2026-05-17", "2026-05-10", "2026-05-03"];
+export type DateRangeValue = { from: string; to: string };
+
+export function dateOnly(date = new Date()): string {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+export function addDays(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  return dateOnly(d);
+}
+
+export function defaultLast7DaysRange(): DateRangeValue {
+  const to = dateOnly();
+  return { from: addDays(to, -6), to };
+}
+
+export function previousDateRange(range: DateRangeValue): DateRangeValue {
+  const fromDate = new Date(`${range.from}T00:00:00`);
+  const toDate = new Date(`${range.to}T00:00:00`);
+  const days = Math.max(1, Math.round((toDate.getTime() - fromDate.getTime()) / 86400000) + 1);
+  return {
+    from: addDays(range.from, -days),
+    to: addDays(range.from, -1),
+  };
+}
+
+function rangeOverlaps(aFrom: string, aTo: string, bFrom: string, bTo: string) {
+  return aFrom <= bTo && aTo >= bFrom;
+}
+
+function formatDemoDate(iso: string) {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+export const DEMO_CURRENT_WEEK = defaultLast7DaysRange().from;
+export const DEMO_WEEKS = Array.from({ length: 4 }, (_, index) => addDays(DEMO_CURRENT_WEEK, index * -7));
 
 export const DEMO_TARGETS: KpiTarget[] = [
   {
@@ -69,6 +109,39 @@ const DEMO_SERIES: Record<string, number[]> = {
   dispatch_completion: [98.5, 98.1, 97.7, 97.2],
 };
 
+export type DemoUploadKind = "total_tickets" | "total_invoiced" | "open_jobs";
+
+export type DemoUploadMetrics = {
+  tickets?: number;
+  finalEdited?: number;
+  ticketVoids?: number;
+  invoiced?: number;
+  invoiceQualityIssues?: number;
+  invoiceCycleDaysTotal?: number;
+  invoiceCycleCount?: number;
+};
+
+export type DemoUploadRecord = {
+  id: string;
+  kind: DemoUploadKind;
+  week_start: string;
+  effective_from?: string | null;
+  effective_to?: string | null;
+  file_name: string;
+  file_path: string | null;
+  row_count: number;
+  uploaded_by: string | null;
+  created_at: string;
+  rows_skipped: number;
+  errors_count: number;
+  processing_ms: number;
+  error_details: { row: number; reason: string }[];
+  status: string;
+  metrics?: DemoUploadMetrics;
+};
+
+export const DEMO_LOCAL_UPLOADS_KEY = "perf-tracker-demo-uploads";
+
 const DEMO_CUSTOMERS = [
   ["ACMEHEALTH", "Acme Health Network", "operations@acmehealth.example", ["dispatch@acmehealth.example", "billing@acmehealth.example"]],
   ["NORTHSTAR", "Northstar Facilities", "service@northstar.example", ["ops@northstar.example"]],
@@ -112,7 +185,7 @@ export function demoEmailStats() {
   return { ready: 2, sent: 4, pending: 2, failed: 1 };
 }
 
-export function demoUploads() {
+export function demoUploads(): DemoUploadRecord[] {
   const kinds = [
     ["total_tickets", "demo-total-tickets.xlsx", 126],
     ["total_invoiced", "demo-total-invoiced.xlsx", 118],
@@ -123,6 +196,8 @@ export function demoUploads() {
       id: `demo-upload-${week}-${kind}`,
       kind,
       week_start: week,
+      effective_from: week,
+      effective_to: addDays(week, 6),
       file_name,
       file_path: null,
       row_count: row_count - weekIndex * 2,
@@ -135,6 +210,174 @@ export function demoUploads() {
       status: "success",
     })),
   ).sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
+export function loadDemoLocalUploads(): DemoUploadRecord[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(DEMO_LOCAL_UPLOADS_KEY) ?? "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveDemoLocalUploads(rows: DemoUploadRecord[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(DEMO_LOCAL_UPLOADS_KEY, JSON.stringify(rows.slice(0, 25)));
+}
+
+export function demoUploadsWithLocal(): DemoUploadRecord[] {
+  return [...loadDemoLocalUploads(), ...demoUploads()]
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
+export function demoUploadsForRange(range: DateRangeValue): DemoUploadRecord[] {
+  return demoUploadsWithLocal().filter((u) => {
+    const from = u.effective_from ?? u.week_start;
+    const to = u.effective_to ?? addDays(u.week_start, 6);
+    return rangeOverlaps(from, to, range.from, range.to);
+  });
+}
+
+function average(values: number[]) {
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+}
+
+function generatedDemoAutoKpisForRange(range: DateRangeValue) {
+  const weeks = DEMO_WEEKS.filter((week) => rangeOverlaps(week, addDays(week, 6), range.from, range.to));
+  const indices = weeks.map((week) => DEMO_WEEKS.indexOf(week)).filter((index) => index >= 0);
+  return {
+    review_to_final_edit: average(indices.map((index) => DEMO_SERIES.review_to_final_edit[index])),
+    ticket_quality: average(indices.map((index) => DEMO_SERIES.ticket_quality[index])),
+    invoice_cycle_time: average(indices.map((index) => DEMO_SERIES.invoice_cycle_time[index])),
+    dispatch_completion: average(indices.map((index) => DEMO_SERIES.dispatch_completion[index])),
+    totals: indices.reduce(
+      (totals, index) => ({
+        tickets: totals.tickets + (126 - index * 4),
+        invoiced: totals.invoiced + (118 - index * 3),
+        quality_issues: totals.quality_issues + (2 + index),
+        voided: totals.voided + (2 + index),
+      }),
+      { tickets: 0, invoiced: 0, quality_issues: 0, voided: 0 },
+    ),
+  };
+}
+
+function localDemoAutoKpisForRange(range: DateRangeValue) {
+  const metrics = demoUploadsForRange(range).reduce(
+    (totals, upload) => {
+      const m = upload.metrics;
+      if (!m) return totals;
+      totals.tickets += m.tickets ?? 0;
+      totals.finalEdited += m.finalEdited ?? 0;
+      totals.ticketVoids += m.ticketVoids ?? 0;
+      totals.invoiced += m.invoiced ?? 0;
+      totals.invoiceQualityIssues += m.invoiceQualityIssues ?? 0;
+      totals.invoiceCycleDaysTotal += m.invoiceCycleDaysTotal ?? 0;
+      totals.invoiceCycleCount += m.invoiceCycleCount ?? 0;
+      totals.hasTickets = totals.hasTickets || m.tickets != null;
+      totals.hasInvoiced = totals.hasInvoiced || m.invoiced != null;
+      return totals;
+    },
+    {
+      tickets: 0,
+      finalEdited: 0,
+      ticketVoids: 0,
+      invoiced: 0,
+      invoiceQualityIssues: 0,
+      invoiceCycleDaysTotal: 0,
+      invoiceCycleCount: 0,
+      hasTickets: false,
+      hasInvoiced: false,
+    },
+  );
+
+  return {
+    review_to_final_edit: metrics.hasTickets && metrics.tickets > 0 ? (metrics.finalEdited / metrics.tickets) * 100 : null,
+    ticket_quality: metrics.hasInvoiced && metrics.invoiced > 0 ? (metrics.invoiceQualityIssues / metrics.invoiced) * 100 : null,
+    invoice_cycle_time: metrics.invoiceCycleCount > 0 ? metrics.invoiceCycleDaysTotal / metrics.invoiceCycleCount : null,
+    dispatch_completion: metrics.hasTickets && metrics.tickets > 0 ? ((metrics.tickets - metrics.ticketVoids) / metrics.tickets) * 100 : null,
+    totals: {
+      tickets: metrics.tickets,
+      invoiced: metrics.invoiced,
+      quality_issues: metrics.invoiceQualityIssues,
+      voided: metrics.ticketVoids,
+    },
+    hasTickets: metrics.hasTickets,
+    hasInvoiced: metrics.hasInvoiced,
+  };
+}
+
+export function demoAutoKpisForRange(range: DateRangeValue) {
+  const generated = generatedDemoAutoKpisForRange(range);
+  const local = localDemoAutoKpisForRange(range);
+  return {
+    review_to_final_edit: local.review_to_final_edit ?? generated.review_to_final_edit,
+    ticket_quality: local.ticket_quality ?? generated.ticket_quality,
+    invoice_cycle_time: local.invoice_cycle_time ?? generated.invoice_cycle_time,
+    dispatch_completion: local.dispatch_completion ?? generated.dispatch_completion,
+    totals: {
+      tickets: local.hasTickets ? local.totals.tickets : generated.totals.tickets,
+      invoiced: local.hasInvoiced ? local.totals.invoiced : generated.totals.invoiced,
+      quality_issues: local.hasInvoiced ? local.totals.quality_issues : generated.totals.quality_issues,
+      voided: local.hasTickets ? local.totals.voided : generated.totals.voided,
+    },
+  };
+}
+
+export function demoKpiValuesWithLocal() {
+  const localValues = loadDemoLocalUploads().flatMap((upload) => {
+    const m = upload.metrics;
+    if (!m) return [];
+    const week_start = upload.effective_from ?? upload.week_start;
+    const created_at = upload.created_at;
+    const rows = [];
+    if (m.tickets != null && m.tickets > 0) {
+      rows.push({
+        id: `${upload.id}-review`,
+        kpi_key: "review_to_final_edit",
+        week_start,
+        actual: ((m.finalEdited ?? 0) / m.tickets) * 100,
+        source: "demo-upload",
+        entered_by: null,
+        created_at,
+      });
+      rows.push({
+        id: `${upload.id}-dispatch`,
+        kpi_key: "dispatch_completion",
+        week_start,
+        actual: ((m.tickets - (m.ticketVoids ?? 0)) / m.tickets) * 100,
+        source: "demo-upload",
+        entered_by: null,
+        created_at,
+      });
+    }
+    if (m.invoiced != null && m.invoiced > 0) {
+      rows.push({
+        id: `${upload.id}-quality`,
+        kpi_key: "ticket_quality",
+        week_start,
+        actual: ((m.invoiceQualityIssues ?? 0) / m.invoiced) * 100,
+        source: "demo-upload",
+        entered_by: null,
+        created_at,
+      });
+    }
+    if ((m.invoiceCycleCount ?? 0) > 0) {
+      rows.push({
+        id: `${upload.id}-invoice-cycle`,
+        kpi_key: "invoice_cycle_time",
+        week_start,
+        actual: (m.invoiceCycleDaysTotal ?? 0) / (m.invoiceCycleCount ?? 1),
+        source: "demo-upload",
+        entered_by: null,
+        created_at,
+      });
+    }
+    return rows;
+  });
+  return [...demoKpiValues(), ...localValues].sort((a, b) => a.week_start.localeCompare(b.week_start));
 }
 
 export function demoNotes(week: string) {
@@ -161,6 +404,7 @@ export function demoNotes(week: string) {
 }
 
 export function demoCustomers() {
+  const { from, to } = defaultLast7DaysRange();
   return DEMO_CUSTOMERS.map(([key, name, email, cc_emails], index) => ({
     id: `demo-customer-${key.toLowerCase()}`,
     key,
@@ -169,9 +413,9 @@ export function demoCustomers() {
     cc_emails,
     active: true,
     enabled: true,
-    last_email_sent_at: `2026-05-${String(22 + (index % 5)).padStart(2, "0")}T14:00:00.000Z`,
-    created_at: "2026-05-01T09:00:00.000Z",
-    updated_at: "2026-05-26T10:00:00.000Z",
+    last_email_sent_at: `${addDays(to, -(index % 5))}T14:00:00.000Z`,
+    created_at: `${from}T09:00:00.000Z`,
+    updated_at: `${to}T10:00:00.000Z`,
   }));
 }
 
@@ -216,7 +460,7 @@ export function demoEmailJobs(week = DEMO_CURRENT_WEEK) {
       sent_at: sent ? `${week}T${String(12 + index).padStart(2, "0")}:30:00.000Z` : null,
       created_by: null,
       created_at: `${week}T10:${String(index * 8).padStart(2, "0")}:00.000Z`,
-      subject: `Open Jobs Report - ${customer.name} - Week of May 24, 2026`,
+      subject: `Open Jobs Report - ${customer.name} - Period starting ${formatDemoDate(week)}`,
       attachment_name: `${customer.name.replace(/[^A-Za-z0-9]+/g, "_")}-open-jobs-${week}.xlsx`,
       scheduled_for: sent ? null : `${week}T${String(16 + index).padStart(2, "0")}:00:00.000Z`,
       cc_emails: customer.cc_emails,

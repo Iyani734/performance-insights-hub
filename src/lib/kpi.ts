@@ -50,10 +50,20 @@ export function formatWeek(iso: string): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
+function addDaysUtc(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 export async function computeAutoKpis(week: string) {
+  return computeAutoKpisForRange(week, addDaysUtc(week, 6));
+}
+
+export async function computeAutoKpisForRange(from: string, to: string) {
   const [ticketsRes, invRes] = await Promise.all([
-    supabase.from("tickets").select("final_edited_by,void_reason,date_recv,kind").eq("week_start", week).eq("kind", "tickets"),
-    supabase.from("tickets").select("final_edited_by,void_reason,date_recv,kind").eq("week_start", week).eq("kind", "invoiced"),
+    supabase.from("tickets").select("final_edited_by,void_reason,date_recv,kind").gte("week_start", from).lte("week_start", to).eq("kind", "tickets"),
+    supabase.from("tickets").select("final_edited_by,void_reason,date_recv,kind").gte("week_start", from).lte("week_start", to).eq("kind", "invoiced"),
   ]);
   const tickets = ticketsRes.data ?? [];
   const invoiced = invRes.data ?? [];
@@ -65,7 +75,7 @@ export async function computeAutoKpis(week: string) {
   const qualityIssues = invoiced.filter((r: any) => r.void_reason && String(r.void_reason).trim() !== "").length;
   const ticketQuality = invoiced.length ? (qualityIssues / invoiced.length) * 100 : null;
 
-  const now = new Date(week + "T00:00:00Z").getTime() + 7 * 86400000;
+  const now = new Date(to + "T00:00:00Z").getTime() + 86400000;
   const cycleDays = invoiced
     .map((r: any) => r.date_recv ? (now - new Date(r.date_recv).getTime()) / 86400000 : null)
     .filter((n: number | null): n is number => n != null && n >= 0);

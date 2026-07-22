@@ -1,36 +1,55 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { computeAutoKpis, computeStatus, formatKpi, formatWeek, weekStartOf, type KpiTarget } from "@/lib/kpi";
+import { computeAutoKpisForRange, formatKpi, formatWeek, type KpiTarget } from "@/lib/kpi";
 import { buildRows, overallScore, deltaPct, isImproving, commentary, focusAreas } from "@/lib/summary";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { StatusPill } from "@/components/StatusPill";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 import { useMemo, useState } from "react";
-import { Ticket, CheckCircle2, AlertTriangle, DollarSign, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, Minus, Mail, TrendingUp, Pencil } from "lucide-react";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Ticket, CheckCircle2, AlertTriangle, DollarSign, ArrowUp, ArrowDown, Minus, Mail, TrendingUp, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/useAuth";
 import { isDemoMode } from "@/lib/demoMode";
-import { DEMO_TARGETS, demoAutoKpis, demoEmailStats, demoKpiValues, demoNotes, demoUploads, DEMO_WEEKS } from "@/lib/demoData";
+import {
+  DEMO_TARGETS,
+  defaultLast7DaysRange,
+  demoAutoKpisForRange,
+  demoEmailStats,
+  demoKpiValuesWithLocal,
+  demoNotes,
+  demoUploadsWithLocal,
+  previousDateRange,
+  type DateRangeValue,
+} from "@/lib/demoData";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({ component: Dashboard });
 
-async function fetchWeeks(): Promise<string[]> {
-  const { data } = await supabase.from("report_uploads").select("week_start").order("week_start", { ascending: false });
-  const uniq = Array.from(new Set((data ?? []).map((r: any) => r.week_start as string)));
-  if (uniq.length === 0) uniq.push(weekStartOf(new Date()));
-  return uniq;
+async function fetchValuesForRange(range: DateRangeValue) {
+  const { data } = await supabase
+    .from("kpi_values")
+    .select("*")
+    .gte("week_start", range.from)
+    .lte("week_start", range.to)
+    .order("week_start");
+  return data ?? [];
 }
 
-async function fetchValuesForWeeks(weeks: string[]) {
-  if (!weeks.length) return [] as any[];
-  const { data } = await supabase.from("kpi_values").select("*").in("week_start", weeks);
-  return data ?? [];
+function periodLabel(range: DateRangeValue) {
+  return `${formatWeek(range.from)} - ${formatWeek(range.to)}`;
+}
+
+function valuesMap(rows: any[]) {
+  const map: Record<string, number | null> = {};
+  for (const v of rows) {
+    map[v.kpi_key] = v.actual != null ? Number(v.actual) : null;
+  }
+  return map;
 }
 
 function Dashboard() {
@@ -38,39 +57,52 @@ function Dashboard() {
   const qc = useQueryClient();
   const { user } = useAuth();
   const demoMode = isDemoMode();
-  const weeksQ = useQuery({ queryKey: ["weeks", demoMode], queryFn: () => demoMode ? Promise.resolve(DEMO_WEEKS) : fetchWeeks() });
-  const [selectedWeek, setSelectedWeek] = useState<string | null>(null);
-  const weeks = weeksQ.data ?? [];
-  const week = selectedWeek ?? weeks[0] ?? weekStartOf(new Date());
-  const idx = weeks.indexOf(week);
-  const prevWeek = idx >= 0 && idx < weeks.length - 1 ? weeks[idx + 1] : null;
+  const [range, setRange] = useState<DateRangeValue>(defaultLast7DaysRange);
+  const validRange = !!range.from && !!range.to && range.from <= range.to;
+  const prevRange = useMemo(() => previousDateRange(range), [range]);
 
   const targetsQ = useQuery({
     queryKey: ["kpi_targets", demoMode],
     queryFn: async () => demoMode ? DEMO_TARGETS : ((await supabase.from("kpi_targets").select("*").order("sort_order")).data ?? []) as KpiTarget[],
   });
 
-  const autoQ = useQuery({ queryKey: ["auto_kpi", week, demoMode], queryFn: () => demoMode ? demoAutoKpis(week) : computeAutoKpis(week), enabled: !!week });
-  const autoPrevQ = useQuery({ queryKey: ["auto_kpi", prevWeek, demoMode], queryFn: () => demoMode ? demoAutoKpis(prevWeek!) : computeAutoKpis(prevWeek!), enabled: !!prevWeek });
+  const autoQ = useQuery({
+    queryKey: ["auto_kpi_range", range, demoMode],
+    queryFn: () => demoMode ? demoAutoKpisForRange(range) : computeAutoKpisForRange(range.from, range.to),
+    enabled: validRange,
+  });
+  const autoPrevQ = useQuery({
+    queryKey: ["auto_kpi_range", prevRange, demoMode],
+    queryFn: () => demoMode ? demoAutoKpisForRange(prevRange) : computeAutoKpisForRange(prevRange.from, prevRange.to),
+    enabled: validRange,
+  });
 
   const valuesQ = useQuery({
-    queryKey: ["kpi_values_pair", week, prevWeek, demoMode],
+    queryKey: ["kpi_values_range", range, demoMode],
     queryFn: () => demoMode
-      ? Promise.resolve(demoKpiValues().filter((v: any) => [week, prevWeek].filter(Boolean).includes(v.week_start)))
-      : fetchValuesForWeeks([week, prevWeek].filter(Boolean) as string[]),
-    enabled: !!week,
+      ? Promise.resolve(demoKpiValuesWithLocal().filter((v: any) => v.week_start >= range.from && v.week_start <= range.to))
+      : fetchValuesForRange(range),
+    enabled: validRange,
+  });
+
+  const prevValuesQ = useQuery({
+    queryKey: ["kpi_values_range", prevRange, demoMode],
+    queryFn: () => demoMode
+      ? Promise.resolve(demoKpiValuesWithLocal().filter((v: any) => v.week_start >= prevRange.from && v.week_start <= prevRange.to))
+      : fetchValuesForRange(prevRange),
+    enabled: validRange,
   });
 
   const trendsQ = useQuery({
     queryKey: ["kpi_trends", demoMode],
-    queryFn: async () => demoMode ? demoKpiValues() : (await supabase.from("kpi_values").select("kpi_key,week_start,actual").order("week_start")).data ?? [],
+    queryFn: async () => demoMode ? demoKpiValuesWithLocal() : (await supabase.from("kpi_values").select("kpi_key,week_start,actual").order("week_start")).data ?? [],
   });
 
   const emailStatsQ = useQuery({
-    queryKey: ["email_stats", week, demoMode],
+    queryKey: ["email_stats", range, demoMode],
     queryFn: async () => {
       if (demoMode) return demoEmailStats();
-      const { data } = await supabase.from("email_jobs").select("status").eq("week_start", week);
+      const { data } = await supabase.from("email_jobs").select("status").gte("week_start", range.from).lte("week_start", range.to);
       const rows = data ?? [];
       return {
         ready: rows.filter((r: any) => r.status === "pending").length,
@@ -79,18 +111,18 @@ function Dashboard() {
         failed: rows.filter((r: any) => r.status === "failed").length,
       };
     },
-    enabled: !!week,
+    enabled: validRange,
   });
 
   const lastUploadQ = useQuery({
     queryKey: ["last_upload", demoMode],
-    queryFn: async () => demoMode ? demoUploads()[0] : (await supabase.from("report_uploads").select("created_at,kind").order("created_at", { ascending: false }).limit(1)).data?.[0],
+    queryFn: async () => demoMode ? demoUploadsWithLocal()[0] : (await supabase.from("report_uploads").select("created_at,kind").order("created_at", { ascending: false }).limit(1)).data?.[0],
   });
 
   const notesQ = useQuery({
-    queryKey: ["kpi_notes", week, demoMode],
-    queryFn: async () => demoMode ? demoNotes(week) : (await supabase.from("kpi_notes").select("*").eq("week_start", week).order("created_at", { ascending: false })).data ?? [],
-    enabled: !!week,
+    queryKey: ["kpi_notes", range, demoMode],
+    queryFn: async () => demoMode ? demoNotes(range.from) : (await supabase.from("kpi_notes").select("*").gte("week_start", range.from).lte("week_start", range.to).order("created_at", { ascending: false })).data ?? [],
+    enabled: validRange,
   });
 
   const targets = targetsQ.data ?? [];
@@ -105,11 +137,9 @@ function Dashboard() {
       quality_issues: auto.ticket_quality ?? null,
       incomplete_tickets: auto.dispatch_completion != null ? Math.max(0, 100 - auto.dispatch_completion) : null,
     };
-    for (const v of (valuesQ.data ?? []).filter((v: any) => v.week_start === week)) {
-      map[v.kpi_key] = v.actual != null ? Number(v.actual) : null;
-    }
+    Object.assign(map, valuesMap(valuesQ.data ?? []));
     return map;
-  }, [autoQ.data, valuesQ.data, week]);
+  }, [autoQ.data, valuesQ.data]);
 
   const prevMap = useMemo(() => {
     const auto: any = autoPrevQ.data ?? {};
@@ -121,20 +151,16 @@ function Dashboard() {
       quality_issues: auto.ticket_quality ?? null,
       incomplete_tickets: auto.dispatch_completion != null ? Math.max(0, 100 - auto.dispatch_completion) : null,
     };
-    if (prevWeek) {
-      for (const v of (valuesQ.data ?? []).filter((v: any) => v.week_start === prevWeek)) {
-        map[v.kpi_key] = v.actual != null ? Number(v.actual) : null;
-      }
-    }
+    Object.assign(map, valuesMap(prevValuesQ.data ?? []));
     return map;
-  }, [autoPrevQ.data, valuesQ.data, prevWeek]);
+  }, [autoPrevQ.data, prevValuesQ.data]);
 
   const rows = useMemo(() => buildRows(targets, currentMap, prevMap), [targets, currentMap, prevMap]);
   const summary = useMemo(() => overallScore(rows), [rows]);
   const focus = useMemo(() => focusAreas(rows), [rows]);
 
   const totals = autoQ.data?.totals ?? { tickets: 0, invoiced: 0, quality_issues: 0, voided: 0 };
-  const noData = weeks.length === 0 || (totals.tickets === 0 && totals.invoiced === 0);
+  const noData = !validRange || (totals.tickets === 0 && totals.invoiced === 0);
 
   const [editingKpi, setEditingKpi] = useState<KpiTarget | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -144,7 +170,7 @@ function Dashboard() {
       if (!editingKpi || !user) return;
       const val = editValue === "" ? null : Number(editValue);
       const { error } = await supabase.from("kpi_values").upsert(
-        { kpi_key: editingKpi.kpi_key, week_start: week, actual: val, source: "manual", entered_by: user.id },
+        { kpi_key: editingKpi.kpi_key, week_start: range.from, actual: val, source: "manual", entered_by: user.id },
         { onConflict: "kpi_key,week_start" }
       );
       if (error) throw error;
@@ -158,7 +184,7 @@ function Dashboard() {
     mutationFn: async () => {
       if (!user || !note.trim()) return;
       const { error } = await supabase.from("kpi_notes").insert({
-        week_start: week, kpi_key: "general", note: note.trim(),
+        week_start: range.from, kpi_key: "general", note: note.trim(),
         author_id: user.id, author_name: user.email,
       });
       if (error) throw error;
@@ -172,15 +198,17 @@ function Dashboard() {
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-3xl font-semibold">Performance Dashboard</h1>
-          <p className="text-sm text-muted-foreground mt-1">Weekly operational KPIs across dispatch, quality, and billing.</p>
+          <p className="text-sm text-muted-foreground mt-1">Operational KPIs across dispatch, quality, and billing.</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button size="icon" variant="outline" disabled={idx <= 0} onClick={() => setSelectedWeek(weeks[idx - 1])}><ChevronLeft className="w-4 h-4" /></Button>
-          <Select value={week} onValueChange={setSelectedWeek}>
-            <SelectTrigger className="w-[220px]"><SelectValue /></SelectTrigger>
-            <SelectContent>{weeks.map(w => <SelectItem key={w} value={w}>Week of {formatWeek(w)}</SelectItem>)}</SelectContent>
-          </Select>
-          <Button size="icon" variant="outline" disabled={idx < 0 || idx >= weeks.length - 1} onClick={() => setSelectedWeek(weeks[idx + 1])}><ChevronRight className="w-4 h-4" /></Button>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">From</Label>
+            <Input type="date" value={range.from} onChange={(e) => setRange((current) => ({ ...current, from: e.target.value }))} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">To</Label>
+            <Input type="date" value={range.to} onChange={(e) => setRange((current) => ({ ...current, to: e.target.value }))} />
+          </div>
         </div>
       </header>
 
@@ -188,7 +216,7 @@ function Dashboard() {
       <Card className="p-6 bg-gradient-to-br from-primary/5 via-card to-card border-primary/20">
         <div className="grid md:grid-cols-4 gap-6 items-center">
           <div>
-            <div className="text-xs uppercase tracking-wide text-muted-foreground">Week of {formatWeek(week)}</div>
+            <div className="text-xs uppercase tracking-wide text-muted-foreground">{periodLabel(range)}</div>
             <div className="mt-2 flex items-baseline gap-3">
               <span className="text-5xl font-display font-bold">{summary.score ?? "—"}{summary.score != null && <span className="text-2xl">%</span>}</span>
             </div>
@@ -220,7 +248,7 @@ function Dashboard() {
           <div className="flex items-center gap-4">
             <AlertTriangle className="w-6 h-6 text-warning" />
             <div className="flex-1">
-              <div className="font-medium">No data for this week yet</div>
+              <div className="font-medium">No data for this date range yet</div>
               <div className="text-sm text-muted-foreground">Upload Total Tickets, Total Invoiced, or Open Jobs to populate KPIs.</div>
             </div>
             <Button onClick={() => nav({ to: "/uploads" })}>Go to Uploads</Button>
@@ -236,11 +264,11 @@ function Dashboard() {
         <StatCard icon={DollarSign} label="Voided" value={totals.voided} accent="text-destructive" />
       </div>
 
-      {/* Weekly Operational Summary */}
+      {/* Operational Summary */}
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h2 className="font-display text-lg font-semibold">Weekly Operational Summary</h2>
+            <h2 className="font-display text-lg font-semibold">Operational Summary</h2>
             <p className="text-xs text-muted-foreground">Status, trend and commentary per KPI</p>
           </div>
         </div>
@@ -302,7 +330,7 @@ function Dashboard() {
       <Card className="overflow-hidden">
         <div className="px-6 py-4 border-b">
           <h2 className="font-display text-lg font-semibold">KPI Performance Tracker</h2>
-          <p className="text-xs text-muted-foreground">Week of {formatWeek(week)}{prevWeek ? ` vs. ${formatWeek(prevWeek)}` : ""}</p>
+          <p className="text-xs text-muted-foreground">{periodLabel(range)} vs. {periodLabel(prevRange)}</p>
         </div>
         <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -364,7 +392,7 @@ function Dashboard() {
             <Button size="sm" onClick={() => addNote.mutate()} disabled={!note.trim() || addNote.isPending}>Add note</Button>
           </div>
           <div className="space-y-3 max-h-[220px] overflow-auto">
-            {(notesQ.data ?? []).length === 0 && <p className="text-sm text-muted-foreground">No notes yet for this week.</p>}
+            {(notesQ.data ?? []).length === 0 && <p className="text-sm text-muted-foreground">No notes yet for this date range.</p>}
             {(notesQ.data ?? []).map((n: any) => (
               <div key={n.id} className="p-3 rounded-md bg-muted/40 border">
                 <div className="text-xs text-muted-foreground mb-1">{n.author_name ?? n.kpi_key} · {new Date(n.created_at).toLocaleString()}</div>
@@ -379,7 +407,7 @@ function Dashboard() {
         <DialogContent>
           <DialogHeader><DialogTitle>Update {editingKpi?.label}</DialogTitle></DialogHeader>
           <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">Week of {formatWeek(week)}. Target: {editingKpi?.target_display ?? "—"}.</p>
+            <p className="text-sm text-muted-foreground">{periodLabel(range)}. Target: {editingKpi?.target_display ?? "—"}.</p>
             <Input type="number" step="0.1" value={editValue} onChange={(e) => setEditValue(e.target.value)} placeholder="Enter value" autoFocus />
           </div>
           <DialogFooter>

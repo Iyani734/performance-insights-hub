@@ -15,7 +15,15 @@ import { formatWeek } from "@/lib/kpi";
 import { readWorkbook, parseTicketsSheet, parseOpenJobsSheet } from "@/lib/parse";
 import { useAuth } from "@/lib/useAuth";
 import { isDemoMode } from "@/lib/demoMode";
-import { demoUploads } from "@/lib/demoData";
+import {
+  defaultLast7DaysRange,
+  demoUploads,
+  loadDemoLocalUploads,
+  saveDemoLocalUploads,
+  type DemoUploadKind,
+  type DemoUploadMetrics,
+  type DemoUploadRecord,
+} from "@/lib/demoData";
 
 export const Route = createFileRoute("/_authenticated/uploads")({ component: UploadsPage });
 
@@ -25,28 +33,31 @@ const KINDS = [
   { value: "open_jobs", label: "Open Jobs" },
 ] as const;
 const DEMO_UPLOADERS = ["Ian", "Yvette"];
-const DEMO_LOCAL_UPLOADS_KEY = "perf-tracker-demo-uploads";
-
-type UploadKind = (typeof KINDS)[number]["value"];
-type DemoUploadRow = ReturnType<typeof demoUploads>[number];
-
-function loadDemoLocalUploads(): DemoUploadRow[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(DEMO_LOCAL_UPLOADS_KEY) ?? "[]");
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveDemoLocalUploads(rows: DemoUploadRow[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(DEMO_LOCAL_UPLOADS_KEY, JSON.stringify(rows.slice(0, 25)));
-}
 
 function isExcelFile(file: File) {
   return /\.(xlsx|xls)$/i.test(file.name);
+}
+
+function buildDemoUploadMetrics(kind: DemoUploadKind, rows: any[], effectiveTo: string): DemoUploadMetrics | undefined {
+  if (kind === "open_jobs") return undefined;
+  const completedRows = rows.filter((row) => !row.void_reason || String(row.void_reason).trim() === "");
+  if (kind === "total_tickets") {
+    return {
+      tickets: rows.length,
+      finalEdited: rows.filter((row) => row.final_edited_by).length,
+      ticketVoids: rows.length - completedRows.length,
+    };
+  }
+  const endMs = new Date(`${effectiveTo}T00:00:00`).getTime() + 86400000;
+  const cycleDays = rows
+    .map((row) => row.date_recv ? Math.max(0, (endMs - new Date(row.date_recv).getTime()) / 86400000) : null)
+    .filter((days): days is number => days != null && Number.isFinite(days));
+  return {
+    invoiced: rows.length,
+    invoiceQualityIssues: rows.filter((row) => row.void_reason && String(row.void_reason).trim() !== "").length,
+    invoiceCycleDaysTotal: cycleDays.reduce((sum, days) => sum + days, 0),
+    invoiceCycleCount: cycleDays.length,
+  };
 }
 
 function UploadsPage() {
@@ -54,15 +65,16 @@ function UploadsPage() {
   const { user, role, isSuperAdmin, loading: authLoading } = useAuth();
   const demoMode = isDemoMode();
   const isAdmin = isSuperAdmin || role === "admin";
-  const [kind, setKind] = useState<UploadKind>("total_tickets");
-  const [week, setWeek] = useState<string>("2026-05-24");
-  const [effectiveFrom, setEffectiveFrom] = useState<string>("2026-05-24");
-  const [effectiveTo, setEffectiveTo] = useState<string>("2026-05-30");
+  const defaultRange = defaultLast7DaysRange();
+  const [kind, setKind] = useState<DemoUploadKind>("total_tickets");
+  const [effectiveFrom, setEffectiveFrom] = useState<string>(defaultRange.from);
+  const [effectiveTo, setEffectiveTo] = useState<string>(defaultRange.to);
   const [file, setFile] = useState<File | null>(null);
   const [fileInputKey, setFileInputKey] = useState(0);
-  const [demoUploadedRows, setDemoUploadedRows] = useState<DemoUploadRow[]>(loadDemoLocalUploads);
+  const [demoUploadedRows, setDemoUploadedRows] = useState<DemoUploadRecord[]>(loadDemoLocalUploads);
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
+  const uploadBucket = effectiveFrom;
 
   const uploadsQ = useQuery({
     queryKey: ["uploads"],
@@ -113,7 +125,9 @@ function UploadsPage() {
           demoUpload: {
             id: `demo-local-upload-${Date.now()}`,
             kind,
-            week_start: week,
+            week_start: uploadBucket,
+            effective_from: effectiveFrom,
+            effective_to: effectiveTo,
             file_name: selectedFile.name,
             file_path: null,
             row_count: parsed.stats.imported,
@@ -124,31 +138,32 @@ function UploadsPage() {
             processing_ms: dt,
             error_details: parsed.stats.error_details,
             status: parsed.stats.errors > 0 ? "partial" : "success",
-          } satisfies DemoUploadRow,
+            metrics: buildDemoUploadMetrics(kind, parsed.rows, effectiveTo),
+          } satisfies DemoUploadRecord,
         };
       }
       if (!user) throw new Error("Sign in to upload files.");
-      const filePath = `${week}/${Date.now()}-${selectedFile.name}`;
+      const filePath = `${uploadBucket}/${Date.now()}-${selectedFile.name}`;
       const { error: sErr } = await supabase.storage.from("report-files").upload(filePath, selectedFile, { upsert: false });
       if (sErr) console.warn("Storage upload failed:", sErr.message);
       const { data: up, error } = await supabase.from("report_uploads")
-        .insert({ kind, week_start: week, file_name: selectedFile.name, uploaded_by: user.id, row_count: 0, status: "processing", file_path: filePath, effective_from: effectiveFrom, effective_to: effectiveTo } as any)
+        .insert({ kind, week_start: uploadBucket, file_name: selectedFile.name, uploaded_by: user.id, row_count: 0, status: "processing", file_path: filePath, effective_from: effectiveFrom, effective_to: effectiveTo } as any)
         .select().single();
       if (error) throw error;
       let stats;
       if (kind === "open_jobs") {
         const parsed = parseOpenJobsSheet(wb);
         stats = parsed.stats;
-        const payload = parsed.rows.map(r => ({ ...r, upload_id: up.id, week_start: week }));
+        const payload = parsed.rows.map(r => ({ ...r, upload_id: up.id, week_start: uploadBucket }));
         for (const c of chunk(payload, 500)) { const { error: e } = await supabase.from("open_jobs").insert(c as any); if (e) throw e; }
       } else {
         const parsed = parseTicketsSheet(wb);
         stats = parsed.stats;
         const tKind = kind === "total_tickets" ? "tickets" : "invoiced";
-        const payload = parsed.rows.map(r => ({ ...r, upload_id: up.id, week_start: week, kind: tKind, raw: r.raw }));
+        const payload = parsed.rows.map(r => ({ ...r, upload_id: up.id, week_start: uploadBucket, kind: tKind, raw: r.raw }));
         for (const c of chunk(payload, 500)) { const { error: e } = await supabase.from("tickets").insert(c as any); if (e) throw e; }
-        const { computeAutoKpis } = await import("@/lib/kpi");
-        const auto = await computeAutoKpis(week);
+        const { computeAutoKpisForRange } = await import("@/lib/kpi");
+        const auto = await computeAutoKpisForRange(uploadBucket, effectiveTo);
         const upserts = [
           { kpi_key: "review_to_final_edit", actual: auto.review_to_final_edit },
           { kpi_key: "ticket_quality", actual: auto.ticket_quality },
@@ -156,7 +171,7 @@ function UploadsPage() {
           { kpi_key: "dispatch_completion", actual: auto.dispatch_completion },
           { kpi_key: "quality_issues", actual: auto.ticket_quality },
           { kpi_key: "incomplete_tickets", actual: auto.dispatch_completion != null ? Math.max(0, 100 - auto.dispatch_completion) : null },
-        ].filter(v => v.actual != null).map(v => ({ ...v, week_start: week, source: "auto", entered_by: user.id }));
+        ].filter(v => v.actual != null).map(v => ({ ...v, week_start: uploadBucket, source: "auto", entered_by: user.id }));
         if (upserts.length) await supabase.from("kpi_values").upsert(upserts, { onConflict: "kpi_key,week_start" });
       }
       const dt = Math.round(performance.now() - t0);
@@ -244,23 +259,19 @@ function UploadsPage() {
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <header>
-        <h1 className="font-display text-3xl font-semibold">Weekly Uploads</h1>
+        <h1 className="font-display text-3xl font-semibold">Report Uploads</h1>
         <p className="text-sm text-muted-foreground mt-1">Upload Total Tickets, Total Invoiced, or Open Jobs exports.</p>
       </header>
 
 
       <Card className="p-6">
-        <div className="grid md:grid-cols-4 gap-4">
+        <div className="grid md:grid-cols-3 gap-4">
           <div className="space-y-2">
             <Label>Report type</Label>
             <Select value={kind} onValueChange={(v: any) => setKind(v)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>{KINDS.map(k => <SelectItem key={k.value} value={k.value}>{k.label}</SelectItem>)}</SelectContent>
             </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Week bucket</Label>
-            <Input type="date" value={week} onChange={(e) => setWeek(e.target.value)} />
           </div>
           <div className="space-y-2">
             <Label>Effective from</Label>
@@ -270,11 +281,11 @@ function UploadsPage() {
             <Label>Effective to</Label>
             <Input type="date" value={effectiveTo} onChange={(e) => setEffectiveTo(e.target.value)} />
           </div>
-          <div className="space-y-2 md:col-span-4">
+          <div className="space-y-2 md:col-span-3">
             <Label>File (.xlsx / .xls)</Label>
             <Input key={fileInputKey} type="file" accept=".xlsx,.xls" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
             <p className="text-xs text-muted-foreground">
-              Pick the date range this file's data actually covers — usually one week, but use a wider range to backfill an older period or a specific month.
+              Pick the date range this file's data actually covers.
             </p>
             {fileError && <p className="text-xs text-destructive">{fileError}</p>}
           </div>
@@ -397,7 +408,7 @@ function UploadsPage() {
             </p>
             <div className="space-y-1.5">
               <Label>Reason (optional)</Label>
-              <Textarea value={deleteReason} onChange={e => setDeleteReason(e.target.value)} placeholder="e.g. Wrong week selected, corrupted data…" rows={3} />
+              <Textarea value={deleteReason} onChange={e => setDeleteReason(e.target.value)} placeholder="e.g. Wrong date range selected, corrupted data…" rows={3} />
             </div>
           </div>
           <DialogFooter>
