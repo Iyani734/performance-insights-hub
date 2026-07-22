@@ -15,11 +15,11 @@ dist-ssr
 .tanstack/**
 .nitro
 *.local
-.env
 
 # Wrangler / Cloudflare
 .wrangler/
 .dev.vars
+.env
 
 # Editor directories and files
 .vscode/*

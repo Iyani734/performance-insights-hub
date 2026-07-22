@@ -222,8 +222,8 @@ function AnalyticsPage() {
                 >
                   <div className="flex items-start justify-between mb-2 relative">
                     <div className="min-w-0">
-                      <div className="text-[10px] text-muted-foreground/80 uppercase tracking-[0.18em] font-semibold">{t.label}</div>
-                      <div className="text-[10px] text-muted-foreground/60 mt-0.5">Target: {t.target_display ?? "—"}</div>
+                      <div className="text-sm text-foreground font-bold tracking-tight">{t.label}</div>
+                      <div className="text-xs text-muted-foreground font-semibold mt-0.5">Target: {t.target_display ?? "—"}</div>
                     </div>
                     <div className="text-right shrink-0">
                       <div className="text-2xl font-display font-bold" style={{ color: lineColor }}>{formatKpi(latest, t)}</div>

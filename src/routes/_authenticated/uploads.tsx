@@ -28,11 +28,13 @@ const DEMO_UPLOADERS = ["Ian", "Yvette"];
 
 function UploadsPage() {
   const qc = useQueryClient();
-  const { user, role } = useAuth();
+  const { user, role, isSuperAdmin } = useAuth();
   const demoMode = isDemoMode();
-  const isAdmin = role === "admin";
+  const isAdmin = isSuperAdmin || role === "admin";
   const [kind, setKind] = useState<(typeof KINDS)[number]["value"]>("total_tickets");
-  const [week, setWeek] = useState<string>("2027-05-24");
+  const [week, setWeek] = useState<string>("2026-05-24");
+  const [effectiveFrom, setEffectiveFrom] = useState<string>("2026-05-24");
+  const [effectiveTo, setEffectiveTo] = useState<string>("2026-05-30");
   const [file, setFile] = useState<File | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
@@ -75,7 +77,7 @@ function UploadsPage() {
       const { error: sErr } = await supabase.storage.from("report-files").upload(filePath, file, { upsert: false });
       if (sErr) console.warn("Storage upload failed:", sErr.message);
       const { data: up, error } = await supabase.from("report_uploads")
-        .insert({ kind, week_start: week, file_name: file.name, uploaded_by: user.id, row_count: 0, status: "processing", file_path: filePath })
+        .insert({ kind, week_start: week, file_name: file.name, uploaded_by: user.id, row_count: 0, status: "processing", file_path: filePath, effective_from: effectiveFrom, effective_to: effectiveTo } as any)
         .select().single();
       if (error) throw error;
       let stats;
@@ -170,13 +172,7 @@ function UploadsPage() {
         <p className="text-sm text-muted-foreground mt-1">Upload Total Tickets, Total Invoiced, or Open Jobs exports.</p>
       </header>
 
-      <Card className="p-6 border-dashed bg-muted/20">
-        <div className="flex min-h-[76px] items-center justify-center text-sm font-medium text-muted-foreground">
-          Next update
-        </div>
-      </Card>
 
-      {/*
       <Card className="p-6">
         <div className="grid md:grid-cols-4 gap-4">
           <div className="space-y-2">
@@ -187,22 +183,32 @@ function UploadsPage() {
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Week starting</Label>
+            <Label>Week bucket</Label>
             <Input type="date" value={week} onChange={(e) => setWeek(e.target.value)} />
           </div>
-          <div className="space-y-2 md:col-span-2">
+          <div className="space-y-2">
+            <Label>Effective from</Label>
+            <Input type="date" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label>Effective to</Label>
+            <Input type="date" value={effectiveTo} onChange={(e) => setEffectiveTo(e.target.value)} />
+          </div>
+          <div className="space-y-2 md:col-span-4">
             <Label>File (.xlsx / .xls)</Label>
             <Input type="file" accept=".xlsx,.xls" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            <p className="text-xs text-muted-foreground">
+              Pick the date range this file's data actually covers — usually one week, but use a wider range to backfill an older period or a specific month.
+            </p>
           </div>
         </div>
         <div className="mt-6 flex items-center gap-3">
-          <Button onClick={() => upload.mutate()} disabled={!file || upload.isPending}>
+          <Button onClick={() => upload.mutate()} disabled={!file || upload.isPending || !effectiveFrom || !effectiveTo || effectiveFrom > effectiveTo}>
             <UploadCloud className="w-4 h-4 mr-2" />{upload.isPending ? "Processing…" : "Upload & Process"}
           </Button>
           {file && <span className="text-sm text-muted-foreground">{file.name}</span>}
         </div>
       </Card>
-      */}
 
       {isAdmin && pendingCount > 0 && (
         <Card className="p-6 border-warning/40 bg-warning/5">

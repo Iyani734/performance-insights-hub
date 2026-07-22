@@ -14,26 +14,36 @@ import {
   ChevronLeft,
   ChevronRight,
   BarChart3,
+  LifeBuoy,
+  ShieldCheck,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/lib/useAuth";
+import { useAuth, canView } from "@/lib/useAuth";
 import { disableDemoMode, isDemoMode } from "@/lib/demoMode";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
+import logoAsset from "@/assets/arc-barricades-logo.webp.asset.json";
 
-const NAV = [
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/analytics", label: "Analytics", icon: BarChart3 },
-  { to: "/uploads", label: "Uploads", icon: Upload },
-  { to: "/open-jobs", label: "Open Jobs", icon: Briefcase },
-  { to: "/customers", label: "Customers", icon: Users },
-  { to: "/emails", label: "Emails", icon: Mail },
-  { to: "/history", label: "History", icon: History },
-  { to: "/settings", label: "Settings", icon: Settings, adminOnly: true },
+type NavItem = {
+  to: string;
+  key: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  superAdminOnly?: boolean;
+};
+
+const NAV: NavItem[] = [
+  { to: "/dashboard",  key: "dashboard",  label: "Dashboard", icon: LayoutDashboard },
+  { to: "/analytics",  key: "analytics",  label: "Analytics", icon: BarChart3 },
+  { to: "/uploads",    key: "uploads",    label: "Uploads",   icon: Upload },
+  { to: "/open-jobs",  key: "open-jobs",  label: "Open Jobs", icon: Briefcase },
+  { to: "/customers",  key: "customers",  label: "Customers", icon: Users },
+  { to: "/emails",     key: "emails",     label: "Emails",    icon: Mail },
+  { to: "/history",    key: "history",    label: "History",   icon: History },
+  { to: "/settings",   key: "settings",   label: "Settings",  icon: Settings },
 ];
-
 
 function SidebarInner({
   collapsed,
@@ -45,7 +55,8 @@ function SidebarInner({
   const loc = useLocation();
   const router = useRouter();
   const qc = useQueryClient();
-  const { user, role } = useAuth();
+  const auth = useAuth();
+  const { user, role, isSuperAdmin, displayName } = auth;
   const demoMode = !user && isDemoMode();
 
   async function signOut() {
@@ -64,13 +75,13 @@ function SidebarInner({
           collapsed && "justify-center px-2"
         )}
       >
-        <div className="w-9 h-9 rounded-lg bg-primary/20 flex items-center justify-center shrink-0">
-          <Activity className="w-5 h-5 text-primary" />
+        <div className={cn("rounded-lg bg-white flex items-center justify-center shrink-0 overflow-hidden", collapsed ? "w-9 h-9" : "w-10 h-10")}>
+          <img src="/logo.webp" alt="ARC Barricades" className="w-full h-full object-contain p-0.5" />
         </div>
         {!collapsed && (
           <div className="min-w-0">
             <div className="font-display font-semibold text-lg leading-tight truncate">
-              Perf Tracker
+              ARC Barricades
             </div>
             <div className="text-xs text-sidebar-foreground/60 truncate">
               Operations KPIs
@@ -80,13 +91,17 @@ function SidebarInner({
       </div>
 
       <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-1">
-        {NAV.filter((n) => !n.adminOnly || role === "admin").map((n) => {
+        {NAV.filter((n) => {
+          if (n.superAdminOnly) return isSuperAdmin;
+          if (demoMode) return true;
+          return canView(auth, n.key);
+        }).map((n) => {
           const active = loc.pathname.startsWith(n.to);
           const Icon = n.icon;
           return (
             <Link
               key={n.to}
-              to={n.to}
+              to={n.to as any}
               onClick={onNavigate}
               title={collapsed ? n.label : undefined}
               className={cn(
@@ -106,25 +121,45 @@ function SidebarInner({
 
       <div
         className={cn(
-          "border-t border-sidebar-border p-3 shrink-0",
+          "border-t border-sidebar-border p-3 shrink-0 space-y-2",
           collapsed && "px-2"
         )}
       >
+        {/* Support link — above the user email */}
+        <Link
+          to="/support"
+          onClick={onNavigate}
+          title={collapsed ? "Support" : undefined}
+          className={cn(
+            "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+            collapsed && "justify-center px-2",
+            loc.pathname.startsWith("/support")
+              ? "bg-sidebar-primary/15 text-sidebar-primary-foreground"
+              : "text-sidebar-foreground/80 hover:bg-sidebar-accent"
+          )}
+        >
+          <LifeBuoy className="w-4 h-4 shrink-0" />
+          {!collapsed && <span className="truncate">Support</span>}
+        </Link>
+
         {!collapsed ? (
           <>
-            <div className="text-xs text-sidebar-foreground/60 mb-2 truncate">
-              {demoMode ? "Demo viewer" : user?.email}
+            <div className="text-sm font-medium text-sidebar-foreground truncate">
+              {demoMode ? "Demo viewer" : (displayName || user?.email)}
             </div>
-            <div className="text-xs uppercase tracking-wide mb-3">
+            <div className="text-xs uppercase tracking-wide">
               <span
                 className={cn(
-                  "px-2 py-0.5 rounded",
-                  role === "admin"
-                    ? "bg-primary/25 text-primary-foreground"
+                  "px-2 py-0.5 rounded inline-flex items-center gap-1",
+                  isSuperAdmin
+                    ? "bg-primary/30 text-primary-foreground"
+                    : role === "admin"
+                    ? "bg-primary/20 text-primary-foreground"
                     : "bg-sidebar-accent"
                 )}
               >
-                {demoMode ? "demo" : role ?? "..."}
+                {isSuperAdmin && <ShieldCheck className="w-3 h-3" />}
+                {demoMode ? "demo" : isSuperAdmin ? "super admin" : role ?? "..."}
               </span>
             </div>
             <Button
@@ -197,10 +232,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </SheetContent>
           </Sheet>
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-md bg-primary/20 flex items-center justify-center">
-              <Activity className="w-4 h-4 text-primary" />
+            <div className="w-8 h-8 rounded-md bg-white flex items-center justify-center overflow-hidden">
+              <img src={logoAsset.url} alt="ARC Barricades" className="w-full h-full object-contain p-0.5" />
             </div>
-            <span className="font-display font-semibold">Perf Tracker</span>
+            <span className="font-display font-semibold">ARC Barricades</span>
           </div>
         </div>
 

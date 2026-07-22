@@ -53,6 +53,51 @@ export type Database = {
         }
         Relationships: []
       }
+      edit_requests: {
+        Row: {
+          changes: Json
+          created_at: string
+          id: string
+          requested_by: string
+          requested_by_name: string | null
+          review_note: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string
+          summary: string | null
+          target_id: string | null
+          target_table: string
+        }
+        Insert: {
+          changes: Json
+          created_at?: string
+          id?: string
+          requested_by: string
+          requested_by_name?: string | null
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          summary?: string | null
+          target_id?: string | null
+          target_table: string
+        }
+        Update: {
+          changes?: Json
+          created_at?: string
+          id?: string
+          requested_by?: string
+          requested_by_name?: string | null
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          summary?: string | null
+          target_id?: string | null
+          target_table?: string
+        }
+        Relationships: []
+      }
       email_jobs: {
         Row: {
           attachment_name: string | null
@@ -291,6 +336,39 @@ export type Database = {
           },
         ]
       }
+      page_permissions: {
+        Row: {
+          can_edit: boolean
+          can_view: boolean
+          created_at: string
+          id: string
+          page: string
+          updated_at: string
+          updated_by: string | null
+          user_id: string
+        }
+        Insert: {
+          can_edit?: boolean
+          can_view?: boolean
+          created_at?: string
+          id?: string
+          page: string
+          updated_at?: string
+          updated_by?: string | null
+          user_id: string
+        }
+        Update: {
+          can_edit?: boolean
+          can_view?: boolean
+          created_at?: string
+          id?: string
+          page?: string
+          updated_at?: string
+          updated_by?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
@@ -315,6 +393,8 @@ export type Database = {
       report_uploads: {
         Row: {
           created_at: string
+          effective_from: string | null
+          effective_to: string | null
           error_details: Json | null
           errors_count: number | null
           file_name: string | null
@@ -330,6 +410,8 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          effective_from?: string | null
+          effective_to?: string | null
           error_details?: Json | null
           errors_count?: number | null
           file_name?: string | null
@@ -345,6 +427,8 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          effective_from?: string | null
+          effective_to?: string | null
           error_details?: Json | null
           errors_count?: number | null
           file_name?: string | null
@@ -507,10 +591,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      ensure_demo_data: {
-        Args: Record<PropertyKey, never>
-        Returns: undefined
-      }
+      ensure_demo_data: { Args: never; Returns: undefined }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -518,9 +599,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      is_super_admin: { Args: { _user_id: string }; Returns: boolean }
     }
     Enums: {
-      app_role: "admin" | "user"
+      app_role: "admin" | "user" | "super_admin"
       report_kind: "total_tickets" | "total_invoiced" | "open_jobs"
       ticket_kind: "tickets" | "invoiced"
     }
@@ -650,7 +732,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["admin", "user"],
+      app_role: ["admin", "user", "super_admin"],
       report_kind: ["total_tickets", "total_invoiced", "open_jobs"],
       ticket_kind: ["tickets", "invoiced"],
     },

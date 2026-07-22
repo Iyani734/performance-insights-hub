@@ -1,7 +1,7 @@
 import type { KpiTarget } from "@/lib/kpi";
 
-export const DEMO_CURRENT_WEEK = "2027-05-24";
-export const DEMO_WEEKS = ["2027-05-24", "2027-05-17", "2027-05-10", "2027-05-03"];
+export const DEMO_CURRENT_WEEK = "2026-05-24";
+export const DEMO_WEEKS = ["2026-05-24", "2026-05-17", "2026-05-10", "2026-05-03"];
 
 export const DEMO_TARGETS: KpiTarget[] = [
   {
@@ -169,9 +169,9 @@ export function demoCustomers() {
     cc_emails,
     active: true,
     enabled: true,
-    last_email_sent_at: `2027-05-${String(22 + (index % 5)).padStart(2, "0")}T14:00:00.000Z`,
-    created_at: "2027-05-01T09:00:00.000Z",
-    updated_at: "2027-05-26T10:00:00.000Z",
+    last_email_sent_at: `2026-05-${String(22 + (index % 5)).padStart(2, "0")}T14:00:00.000Z`,
+    created_at: "2026-05-01T09:00:00.000Z",
+    updated_at: "2026-05-26T10:00:00.000Z",
   }));
 }
 
@@ -185,8 +185,8 @@ export function demoOpenJobs(week = DEMO_CURRENT_WEEK) {
       week_start: week,
       customer_key: customer.key,
       customer_name: customer.name,
-      job_no: `OJ-202722-${customerIndex + 1}${jobIndex + 1}`,
-      ticket_no: `TCK-202722-${String(customerIndex * 20 + jobIndex + 1).padStart(4, "0")}`,
+      job_no: `OJ-202622-${customerIndex + 1}${jobIndex + 1}`,
+      ticket_no: `TCK-202622-${String(customerIndex * 20 + jobIndex + 1).padStart(4, "0")}`,
       order_type: ["Repair", "Inspection", "Preventive Maintenance", "Install"][jobIndex % 4],
       last_activity: "Customer update prepared for the weekly report",
       details: { demo: true, priority: jobIndex === 0 ? "high" : "normal" },
@@ -216,7 +216,7 @@ export function demoEmailJobs(week = DEMO_CURRENT_WEEK) {
       sent_at: sent ? `${week}T${String(12 + index).padStart(2, "0")}:30:00.000Z` : null,
       created_by: null,
       created_at: `${week}T10:${String(index * 8).padStart(2, "0")}:00.000Z`,
-      subject: `Open Jobs Report - ${customer.name} - Week of May 24, 2027`,
+      subject: `Open Jobs Report - ${customer.name} - Week of May 24, 2026`,
       attachment_name: `${customer.name.replace(/[^A-Za-z0-9]+/g, "_")}-open-jobs-${week}.xlsx`,
       scheduled_for: sent ? null : `${week}T${String(16 + index).padStart(2, "0")}:00:00.000Z`,
       cc_emails: customer.cc_emails,
