@@ -25,23 +25,49 @@ const KINDS = [
   { value: "open_jobs", label: "Open Jobs" },
 ] as const;
 const DEMO_UPLOADERS = ["Ian", "Yvette"];
+const DEMO_LOCAL_UPLOADS_KEY = "perf-tracker-demo-uploads";
+
+type UploadKind = (typeof KINDS)[number]["value"];
+type DemoUploadRow = ReturnType<typeof demoUploads>[number];
+
+function loadDemoLocalUploads(): DemoUploadRow[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(DEMO_LOCAL_UPLOADS_KEY) ?? "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveDemoLocalUploads(rows: DemoUploadRow[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(DEMO_LOCAL_UPLOADS_KEY, JSON.stringify(rows.slice(0, 25)));
+}
+
+function isExcelFile(file: File) {
+  return /\.(xlsx|xls)$/i.test(file.name);
+}
 
 function UploadsPage() {
   const qc = useQueryClient();
-  const { user, role, isSuperAdmin } = useAuth();
+  const { user, role, isSuperAdmin, loading: authLoading } = useAuth();
   const demoMode = isDemoMode();
   const isAdmin = isSuperAdmin || role === "admin";
-  const [kind, setKind] = useState<(typeof KINDS)[number]["value"]>("total_tickets");
+  const [kind, setKind] = useState<UploadKind>("total_tickets");
   const [week, setWeek] = useState<string>("2026-05-24");
   const [effectiveFrom, setEffectiveFrom] = useState<string>("2026-05-24");
   const [effectiveTo, setEffectiveTo] = useState<string>("2026-05-30");
   const [file, setFile] = useState<File | null>(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
+  const [demoUploadedRows, setDemoUploadedRows] = useState<DemoUploadRow[]>(loadDemoLocalUploads);
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
 
   const uploadsQ = useQuery({
-    queryKey: ["uploads", demoMode],
-    queryFn: async () => demoMode ? demoUploads() : (await supabase.from("report_uploads").select("*").order("created_at", { ascending: false }).limit(50)).data ?? [],
+    queryKey: ["uploads"],
+    enabled: !demoMode,
+    queryFn: async () => (await supabase.from("report_uploads").select("*").order("created_at", { ascending: false }).limit(50)).data ?? [],
   });
 
   const profilesQ = useQuery({
@@ -68,16 +94,45 @@ function UploadsPage() {
     return m;
   }, [requestsQ.data]);
 
+  const uploads = useMemo(
+    () => demoMode ? [...demoUploadedRows, ...demoUploads()] : (uploadsQ.data ?? []),
+    [demoMode, demoUploadedRows, uploadsQ.data],
+  );
+
   const upload = useMutation({
-    mutationFn: async () => {
-      if (!file || !user) throw new Error("Missing file");
+    mutationFn: async (selectedFile: File | null) => {
+      if (!selectedFile) throw new Error("Choose an Excel file before uploading.");
+      if (!isExcelFile(selectedFile)) throw new Error("Upload a .xlsx or .xls file.");
       const t0 = performance.now();
-      const wb = await readWorkbook(file);
-      const filePath = `${week}/${Date.now()}-${file.name}`;
-      const { error: sErr } = await supabase.storage.from("report-files").upload(filePath, file, { upsert: false });
+      const wb = await readWorkbook(selectedFile);
+      if (demoMode) {
+        const parsed = kind === "open_jobs" ? parseOpenJobsSheet(wb) : parseTicketsSheet(wb);
+        const dt = Math.round(performance.now() - t0);
+        return {
+          stats: parsed.stats,
+          demoUpload: {
+            id: `demo-local-upload-${Date.now()}`,
+            kind,
+            week_start: week,
+            file_name: selectedFile.name,
+            file_path: null,
+            row_count: parsed.stats.imported,
+            uploaded_by: null,
+            created_at: new Date().toISOString(),
+            rows_skipped: parsed.stats.skipped,
+            errors_count: parsed.stats.errors,
+            processing_ms: dt,
+            error_details: parsed.stats.error_details,
+            status: parsed.stats.errors > 0 ? "partial" : "success",
+          } satisfies DemoUploadRow,
+        };
+      }
+      if (!user) throw new Error("Sign in to upload files.");
+      const filePath = `${week}/${Date.now()}-${selectedFile.name}`;
+      const { error: sErr } = await supabase.storage.from("report-files").upload(filePath, selectedFile, { upsert: false });
       if (sErr) console.warn("Storage upload failed:", sErr.message);
       const { data: up, error } = await supabase.from("report_uploads")
-        .insert({ kind, week_start: week, file_name: file.name, uploaded_by: user.id, row_count: 0, status: "processing", file_path: filePath, effective_from: effectiveFrom, effective_to: effectiveTo } as any)
+        .insert({ kind, week_start: week, file_name: selectedFile.name, uploaded_by: user.id, row_count: 0, status: "processing", file_path: filePath, effective_from: effectiveFrom, effective_to: effectiveTo } as any)
         .select().single();
       if (error) throw error;
       let stats;
@@ -110,9 +165,21 @@ function UploadsPage() {
         processing_ms: dt, error_details: stats.error_details as any,
         status: stats.errors > 0 ? "partial" : "success",
       }).eq("id", up.id);
-      return stats;
+      return { stats };
     },
-    onSuccess: (s) => { toast.success(`${s.imported} imported${s.skipped ? `, ${s.skipped} skipped` : ""}${s.errors ? `, ${s.errors} errors` : ""}`); setFile(null); qc.invalidateQueries(); },
+    onSuccess: ({ stats: s, demoUpload }) => {
+      if (demoUpload) {
+        setDemoUploadedRows((prev) => {
+          const next = [demoUpload, ...prev].slice(0, 25);
+          saveDemoLocalUploads(next);
+          return next;
+        });
+      }
+      toast.success(`${s.imported} imported${s.skipped ? `, ${s.skipped} skipped` : ""}${s.errors ? `, ${s.errors} errors` : ""}`);
+      setFile(null);
+      setFileInputKey((v) => v + 1);
+      qc.invalidateQueries();
+    },
     onError: (e: any) => toast.error(e.message ?? "Upload failed"),
   });
 
@@ -164,6 +231,15 @@ function UploadsPage() {
   }
 
   const pendingCount = (requestsQ.data ?? []).filter((r: any) => r.status === "pending").length;
+  const fileError = file && !isExcelFile(file) ? "Upload a .xlsx or .xls file." : null;
+  const uploadDisabled =
+    upload.isPending ||
+    !file ||
+    !!fileError ||
+    !effectiveFrom ||
+    !effectiveTo ||
+    effectiveFrom > effectiveTo ||
+    (!demoMode && authLoading);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -196,15 +272,16 @@ function UploadsPage() {
           </div>
           <div className="space-y-2 md:col-span-4">
             <Label>File (.xlsx / .xls)</Label>
-            <Input type="file" accept=".xlsx,.xls" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            <Input key={fileInputKey} type="file" accept=".xlsx,.xls" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
             <p className="text-xs text-muted-foreground">
               Pick the date range this file's data actually covers — usually one week, but use a wider range to backfill an older period or a specific month.
             </p>
+            {fileError && <p className="text-xs text-destructive">{fileError}</p>}
           </div>
         </div>
         <div className="mt-6 flex items-center gap-3">
-          <Button onClick={() => upload.mutate()} disabled={!file || upload.isPending || !effectiveFrom || !effectiveTo || effectiveFrom > effectiveTo}>
-            <UploadCloud className="w-4 h-4 mr-2" />{upload.isPending ? "Processing…" : "Upload & Process"}
+          <Button onClick={() => upload.mutate(file)} disabled={uploadDisabled}>
+            <UploadCloud className="w-4 h-4 mr-2" />{upload.isPending ? "Processing…" : demoMode ? "Process Demo File" : "Upload & Process"}
           </Button>
           {file && <span className="text-sm text-muted-foreground">{file.name}</span>}
         </div>
@@ -218,7 +295,7 @@ function UploadsPage() {
           </h2>
           <div className="space-y-2">
             {(requestsQ.data ?? []).filter((r: any) => r.status === "pending").map((r: any) => {
-              const u = (uploadsQ.data ?? []).find((x: any) => x.id === r.upload_id);
+              const u = uploads.find((x: any) => x.id === r.upload_id);
               return (
                 <div key={r.id} className="flex flex-wrap items-center gap-3 p-3 rounded-md bg-card border">
                   <FileSpreadsheet className="w-4 h-4 text-primary shrink-0" />
@@ -242,7 +319,7 @@ function UploadsPage() {
       <Card>
         <div className="px-6 py-4 border-b flex items-center justify-between">
           <h2 className="font-display text-lg font-semibold">Upload history</h2>
-          <span className="text-xs text-muted-foreground">{(uploadsQ.data ?? []).length} uploads</span>
+          <span className="text-xs text-muted-foreground">{uploads.length} uploads</span>
         </div>
         <div className="max-h-[520px] overflow-auto">
           <table className="w-full text-sm">
@@ -260,7 +337,7 @@ function UploadsPage() {
               </tr>
             </thead>
             <tbody>
-              {(uploadsQ.data ?? []).map((u: any, index: number) => {
+              {uploads.map((u: any, index: number) => {
                 const uploader = u.uploaded_by ? profileMap.get(u.uploaded_by) : null;
                 const uploaderName = uploader?.name ?? (u.file_name?.startsWith("demo-") ? DEMO_UPLOADERS[index % DEMO_UPLOADERS.length] : "Unknown");
                 const pending = pendingByUpload.get(u.id);
@@ -303,7 +380,7 @@ function UploadsPage() {
                   </tr>
                 );
               })}
-              {(uploadsQ.data ?? []).length === 0 && (
+              {uploads.length === 0 && (
                 <tr><td colSpan={9} className="text-center py-8 text-sm text-muted-foreground">No uploads yet.</td></tr>
               )}
             </tbody>
