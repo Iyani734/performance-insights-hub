@@ -307,6 +307,10 @@ function Dashboard() {
                     </span>
                   )}
                 </div>
+                <div className="mt-3 flex items-center justify-between gap-3 rounded-md bg-muted/50 px-3 py-2 text-xs">
+                  <span className="uppercase tracking-wide text-muted-foreground">Target</span>
+                  <span className="font-semibold text-foreground">{r.target.target_display ?? "No target"}</span>
+                </div>
                 <p className="text-xs text-muted-foreground mt-2">{commentary(r)}</p>
                 {r.target.auto ? (
                   <span className="mt-2 inline-block text-[10px] text-muted-foreground uppercase tracking-wide">Auto-calculated</span>
@@ -330,7 +334,10 @@ function Dashboard() {
             {focus.map(r => (
               <div key={r.target.id} className="flex items-center gap-3 text-sm">
                 <StatusPill status={r.status} />
-                <span className="min-w-0 flex-1 break-words font-medium">{r.target.label}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block break-words font-medium">{r.target.label}</span>
+                  <span className="block text-xs text-muted-foreground">Target: {r.target.target_display ?? "No target"}</span>
+                </span>
                 <span className="ml-auto shrink-0 text-muted-foreground">{formatKpi(r.actual, r.target)}</span>
               </div>
             ))}
