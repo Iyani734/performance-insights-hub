@@ -104,7 +104,7 @@ const METRICS: MetricDefinition[] = [
     formula:
       "Count ticket Status values matching Active, Review, and Final Edit; codes A, R, and F are also recognized.",
     columns: ["Status"],
-    note: "This file uses coded statuses. F is counted as Final Edit, while Active and Review remain empty unless the upload includes A/Active or R/Review rows.",
+    note: "Active is Status A/Active, Review is Status R/Review, and Final Edit is Status F/Final Edit. The dashboard and analytics use those exact buckets from uploaded Total Tickets rows.",
   },
 ];
 

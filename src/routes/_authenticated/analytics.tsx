@@ -3,19 +3,21 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
-import { XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Area, AreaChart } from "recharts";
+import { XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Area, AreaChart, Bar, BarChart, Legend } from "recharts";
 import { computeStatus, formatKpi, formatWeek, type KpiTarget, type KpiStatus } from "@/lib/kpi";
 import { StatusPill } from "@/components/StatusPill";
 import { cn } from "@/lib/utils";
 import { TrendingUp, TrendingDown, Minus, BarChart3, Grid3x3, Sparkles } from "lucide-react";
 import { DateRangeSelect, type DateRange } from "@/components/DateRangeSelect";
 import { useDemoMode } from "@/lib/demoMode";
-import { DEMO_TARGETS, demoKpiValues } from "@/lib/demoData";
-import { isSeededDemoSource } from "@/lib/liveData";
+import { addDays, DEMO_TARGETS, DEMO_WEEKS, demoAutoKpisForRange, demoKpiValues } from "@/lib/demoData";
+import { isSeededDemoPayload, isSeededDemoSource } from "@/lib/liveData";
+import { normalizeTicketStatus } from "@/lib/kpiRules";
 
 export const Route = createFileRoute("/_authenticated/analytics")({ component: AnalyticsPage });
 
 type Row = { kpi_key: string; week_start: string; actual: number | null };
+type TicketStatusRow = { week_start: string; active: number; review: number; finalEdit: number; total: number };
 
 const TREND_COLORS = [
   "#0f766e",
@@ -33,6 +35,42 @@ function statusColor(s: KpiStatus): string {
 }
 function statusBg(s: KpiStatus): string {
   return s === "green" ? "bg-success" : s === "yellow" ? "bg-warning" : s === "red" ? "bg-destructive" : "bg-muted";
+}
+
+function buildTicketStatusRows(rows: any[]): TicketStatusRow[] {
+  const byWeek = new Map<string, TicketStatusRow>();
+
+  for (const row of rows) {
+    const week = String(row.week_start ?? "").slice(0, 10);
+    if (!week) continue;
+
+    if (!byWeek.has(week)) {
+      byWeek.set(week, { week_start: week, active: 0, review: 0, finalEdit: 0, total: 0 });
+    }
+
+    const bucket = byWeek.get(week)!;
+    bucket.total += 1;
+
+    const status = normalizeTicketStatus(row.status);
+    if (status === "active") bucket.active += 1;
+    if (status === "review") bucket.review += 1;
+    if (status === "final edit") bucket.finalEdit += 1;
+  }
+
+  return Array.from(byWeek.values()).sort((a, b) => a.week_start.localeCompare(b.week_start));
+}
+
+function demoTicketStatusRows(): TicketStatusRow[] {
+  return DEMO_WEEKS.map((week) => {
+    const totals = demoAutoKpisForRange({ from: week, to: addDays(week, 6) }).totals;
+    return {
+      week_start: week,
+      active: totals.active_tickets,
+      review: totals.review_tickets,
+      finalEdit: totals.final_edit_tickets,
+      total: totals.tickets,
+    };
+  }).sort((a, b) => a.week_start.localeCompare(b.week_start));
 }
 
 function AnalyticsPage() {
@@ -53,16 +91,33 @@ function AnalyticsPage() {
     },
   });
 
+  const ticketStatusQ = useQuery({
+    queryKey: ["ticket_status_counts", demoMode],
+    queryFn: async () => {
+      if (demoMode) return demoTicketStatusRows();
+      const { data } = await supabase
+        .from("tickets")
+        .select("week_start,status,raw")
+        .eq("kind", "tickets")
+        .order("week_start");
+      return buildTicketStatusRows((data ?? []).filter((row) => !isSeededDemoPayload(row.raw)));
+    },
+  });
+
   const targets = targetsQ.data ?? [];
   const rows = valuesQ.data ?? [];
+  const ticketStatusRows = ticketStatusQ.data ?? [];
 
   const weeks = useMemo(() => {
-    const all = Array.from(new Set(rows.map(r => r.week_start))).sort();
+    const all = Array.from(new Set([
+      ...rows.map(r => r.week_start),
+      ...ticketStatusRows.map(r => r.week_start),
+    ])).sort();
     if (range.preset === "all") return all;
     if (range.preset === "custom" && range.from && range.to) return all.filter(w => w >= range.from! && w <= range.to!);
     const n = Number(range.preset);
     return Number.isFinite(n) ? all.slice(-n) : all;
-  }, [rows, range]);
+  }, [rows, ticketStatusRows, range]);
 
   const byKpi = useMemo(() => {
     const m = new Map<string, Map<string, number | null>>();
@@ -74,8 +129,23 @@ function AnalyticsPage() {
     return m;
   }, [rows, weeks]);
 
-  const loading = targetsQ.isLoading || valuesQ.isLoading;
-  const empty = !loading && (targets.length === 0 || rows.length === 0);
+  const statusChartData = useMemo(() => {
+    const byWeek = new Map(ticketStatusRows.map((row) => [row.week_start, row]));
+    return weeks
+      .map((week) => {
+        const row = byWeek.get(week);
+        return {
+          week: formatWeek(week).replace(/,.*/, ""),
+          active: row?.active ?? 0,
+          review: row?.review ?? 0,
+          finalEdit: row?.finalEdit ?? 0,
+        };
+      })
+      .filter((row) => row.active > 0 || row.review > 0 || row.finalEdit > 0);
+  }, [ticketStatusRows, weeks]);
+
+  const loading = targetsQ.isLoading || valuesQ.isLoading || ticketStatusQ.isLoading;
+  const empty = !loading && rows.length === 0 && ticketStatusRows.length === 0;
 
   // Insights
   const insights = useMemo(() => {
@@ -153,7 +223,39 @@ function AnalyticsPage() {
             </Card>
           )}
 
+          {/* Ticket status snapshot */}
+          {statusChartData.length > 0 && (
+            <Card className="p-6">
+              <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+                <div>
+                  <h2 className="font-display text-base font-semibold flex items-center gap-2">
+                    <BarChart3 className="w-4 h-4" />Ticket Status Snapshot
+                  </h2>
+                  <p className="text-xs text-muted-foreground">Counts from the Total Tickets Status column: A/Active, R/Review, and F/Final Edit.</p>
+                </div>
+                <div className="text-xs text-muted-foreground">Selected date window</div>
+              </div>
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={statusChartData} margin={{ top: 8, right: 8, bottom: 0, left: -10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 14% 88%)" opacity={0.9} />
+                  <XAxis dataKey="week" stroke="hsl(220 10% 42%)" fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis stroke="hsl(220 10% 42%)" fontSize={11} tickLine={false} axisLine={false} width={48} />
+                  <Tooltip
+                    cursor={{ fill: "hsl(186 54% 93%)", opacity: 0.5 }}
+                    contentStyle={{ background: "hsl(0 0% 100%)", color: "hsl(220 25% 16%)", border: "1px solid hsl(220 14% 86%)", borderRadius: 8, fontSize: 12 }}
+                    formatter={(v: any, name: any) => [Number(v).toLocaleString(), name]}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Bar dataKey="active" name="Active" fill="#38bdf8" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="review" name="Review" fill="#fbbf24" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="finalEdit" name="Final Edit" fill="#34d399" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </Card>
+          )}
+
           {/* Heatmap */}
+          {targets.length > 0 && rows.length > 0 && (
           <Card className="p-6">
             <div className="flex items-center justify-between mb-4">
               <div>
@@ -207,8 +309,10 @@ function AnalyticsPage() {
               </table>
             </div>
           </Card>
+          )}
 
           {/* Per-KPI trend charts */}
+          {targets.length > 0 && rows.length > 0 && (
           <div className="grid md:grid-cols-2 gap-4">
             {targets.map((t, index) => {
               const data = weeks.map(w => ({ week: formatWeek(w).replace(/,.*/, ""), value: byKpi.get(t.kpi_key)?.get(w) ?? null }));
@@ -277,6 +381,7 @@ function AnalyticsPage() {
               );
             })}
           </div>
+          )}
         </>
       )}
     </div>

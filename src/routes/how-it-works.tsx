@@ -99,7 +99,7 @@ const METRICS: MetricSpec[] = [
     formula:
       "count Status values matching Active, Review, and Final Edit; codes A, R, and F are recognized",
     columns: ["Status"],
-    why: "This gives the dashboard snapshot of active, review, and final-edit tickets from the uploaded TCR data.",
+    why: "Active is Status A/Active, Review is Status R/Review, and Final Edit is Status F/Final Edit. This gives the dashboard and analytics snapshot directly from uploaded TCR data.",
   },
 ];
 

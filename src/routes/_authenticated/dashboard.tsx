@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { StatusPill } from "@/components/StatusPill";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Ticket, CheckCircle2, AlertTriangle, DollarSign, ArrowUp, ArrowDown, Minus, Mail, TrendingUp, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/useAuth";
@@ -31,6 +31,8 @@ import {
 
 export const Route = createFileRoute("/_authenticated/dashboard")({ component: Dashboard });
 
+const DASHBOARD_RANGE_STORAGE_KEY = "arc-dashboard-date-range";
+
 async function fetchValuesForRange(range: DateRangeValue) {
   const { data } = await supabase
     .from("kpi_values")
@@ -43,6 +45,33 @@ async function fetchValuesForRange(range: DateRangeValue) {
 
 function periodLabel(range: DateRangeValue) {
   return `${formatWeek(range.from)} - ${formatWeek(range.to)}`;
+}
+
+function loadDashboardRange() {
+  const fallback = defaultLast7DaysRange();
+  if (typeof window === "undefined") return fallback;
+
+  try {
+    const stored = window.localStorage.getItem(DASHBOARD_RANGE_STORAGE_KEY);
+    const parsed = stored ? JSON.parse(stored) : null;
+    if (
+      parsed &&
+      typeof parsed.from === "string" &&
+      typeof parsed.to === "string" &&
+      parsed.from <= parsed.to
+    ) {
+      return parsed as DateRangeValue;
+    }
+  } catch {
+    return fallback;
+  }
+
+  return fallback;
+}
+
+function saveDashboardRange(range: DateRangeValue) {
+  if (typeof window === "undefined" || !range.from || !range.to || range.from > range.to) return;
+  window.localStorage.setItem(DASHBOARD_RANGE_STORAGE_KEY, JSON.stringify(range));
 }
 
 function valuesMap(rows: any[]) {
@@ -59,9 +88,13 @@ function Dashboard() {
   const qc = useQueryClient();
   const { user } = useAuth();
   const demoMode = useDemoMode();
-  const [range, setRange] = useState<DateRangeValue>(defaultLast7DaysRange);
+  const [range, setRange] = useState<DateRangeValue>(loadDashboardRange);
   const validRange = !!range.from && !!range.to && range.from <= range.to;
   const prevRange = useMemo(() => previousDateRange(range), [range]);
+
+  useEffect(() => {
+    saveDashboardRange(range);
+  }, [range]);
 
   const targetsQ = useQuery({
     queryKey: ["kpi_targets", demoMode],
