@@ -146,6 +146,7 @@ function Dashboard() {
     const map: Record<string, number | null> = {
       review_to_final_edit: auto.review_to_final_edit ?? null,
       ticket_quality: auto.ticket_quality ?? null,
+      invoice_cycle_time: auto.invoice_cycle_time ?? null,
       dispatch_completion: auto.dispatch_completion ?? null,
       quality_issues: auto.totals?.quality_issues ?? null,
     };
@@ -158,6 +159,7 @@ function Dashboard() {
     const map: Record<string, number | null> = {
       review_to_final_edit: auto.review_to_final_edit ?? null,
       ticket_quality: auto.ticket_quality ?? null,
+      invoice_cycle_time: auto.invoice_cycle_time ?? null,
       dispatch_completion: auto.dispatch_completion ?? null,
       quality_issues: auto.totals?.quality_issues ?? null,
     };

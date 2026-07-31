@@ -53,6 +53,69 @@ function normalizeTicketStatus(status: unknown) {
   return value;
 }
 
+const FINAL_EDIT_DATE_KEYS = [
+  "Final Edit Date",
+  "Final Edited Date",
+  "Final Edit Time",
+  "Final Edited At",
+  "Final Edit Timestamp",
+  "Date Final Edited",
+  "Date Final Edit",
+  "Date Recv",
+];
+
+const INVOICE_DATE_KEYS = [
+  "Invoice Date",
+  "Invoiced Date",
+  "Date Invoiced",
+  "Invoice Created",
+  "Invoice Timestamp",
+  "Billed Date",
+  "Billing Date",
+  "Deliver/Pickup",
+];
+
+function normalizeHeader(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function toDate(value: unknown): Date | null {
+  if (value == null || value === "") return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+  if (typeof value === "number") {
+    const date = new Date(Math.round((value - 25569) * 86400 * 1000));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const text = String(value).trim();
+  if (!text) return null;
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function dateFromRaw(raw: unknown, keys: string[]): Date | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  for (const key of keys) {
+    const exact = toDate(record[key]);
+    if (exact) return exact;
+  }
+
+  const normalized = new Map(Object.keys(record).map((key) => [normalizeHeader(key), key]));
+  for (const key of keys) {
+    const actual = normalized.get(normalizeHeader(key));
+    const value = actual ? toDate(record[actual]) : null;
+    if (value) return value;
+  }
+  return null;
+}
+
+function invoiceCycleDays(row: any): number | null {
+  const finalEditDate = dateFromRaw(row.raw, FINAL_EDIT_DATE_KEYS) ?? toDate(row.date_recv);
+  const invoiceDate = dateFromRaw(row.raw, INVOICE_DATE_KEYS);
+  if (!finalEditDate || !invoiceDate) return null;
+  return Math.max(0, (invoiceDate.getTime() - finalEditDate.getTime()) / 86400000);
+}
+
 async function insertBatches<T>(rows: T[], insert: (batch: T[]) => Promise<void>) {
   const batches = chunk(rows, 500);
   let nextBatch = 0;
@@ -65,11 +128,15 @@ async function insertBatches<T>(rows: T[], insert: (batch: T[]) => Promise<void>
   await Promise.all(workers);
 }
 
-function buildDemoUploadMetrics(kind: DemoUploadKind, rows: any[], effectiveTo: string): DemoUploadMetrics | undefined {
+function buildDemoUploadMetrics(kind: DemoUploadKind, rows: any[]): DemoUploadMetrics | undefined {
   if (kind === "open_jobs") return undefined;
   const completedRows = rows.filter((row) => !row.void_reason || String(row.void_reason).trim() === "");
   if (kind === "total_tickets") {
     const statusRows = rows.map((row) => normalizeTicketStatus(row.status));
+    const cycleDays = rows
+      .filter((row) => normalizeTicketStatus(row.status) === "invoiced")
+      .map((row) => invoiceCycleDays(row))
+      .filter((days): days is number => days != null && Number.isFinite(days));
     return {
       tickets: rows.length,
       finalEdited: rows.filter((row) => row.final_edited_by).length,
@@ -77,11 +144,12 @@ function buildDemoUploadMetrics(kind: DemoUploadKind, rows: any[], effectiveTo: 
       activeTickets: statusRows.filter((status) => status === "active").length,
       reviewTickets: statusRows.filter((status) => status === "review").length,
       finalEditTickets: statusRows.filter((status) => status === "final edit").length,
+      invoiceCycleDaysTotal: cycleDays.reduce((sum, days) => sum + days, 0),
+      invoiceCycleCount: cycleDays.length,
     };
   }
-  const endMs = new Date(`${effectiveTo}T00:00:00`).getTime() + 86400000;
   const cycleDays = rows
-    .map((row) => row.date_recv ? Math.max(0, (endMs - new Date(row.date_recv).getTime()) / 86400000) : null)
+    .map((row) => invoiceCycleDays(row))
     .filter((days): days is number => days != null && Number.isFinite(days));
   return {
     invoiced: rows.length,
@@ -176,7 +244,7 @@ function UploadsPage() {
             processing_ms: dt,
             error_details: parsed.stats.error_details,
             status: parsed.stats.errors > 0 ? "partial" : "success",
-            metrics: buildDemoUploadMetrics(kind, parsed.rows, effectiveTo),
+            metrics: buildDemoUploadMetrics(kind, parsed.rows),
           } satisfies DemoUploadRecord,
         };
       }
@@ -228,6 +296,7 @@ function UploadsPage() {
           const upserts = [
             { kpi_key: "review_to_final_edit", actual: auto.review_to_final_edit },
             { kpi_key: "ticket_quality", actual: auto.ticket_quality },
+            { kpi_key: "invoice_cycle_time", actual: auto.invoice_cycle_time },
           ].filter(v => v.actual != null).map(v => ({ ...v, week_start: uploadBucket, source: "auto", entered_by: user.id }));
           const kpiWrite = upserts.length
             ? Promise.resolve(supabase.from("kpi_values").upsert(upserts, { onConflict: "kpi_key,week_start" }))
