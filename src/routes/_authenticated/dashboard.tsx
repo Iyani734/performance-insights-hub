@@ -146,6 +146,7 @@ function Dashboard() {
     const map: Record<string, number | null> = {
       review_to_final_edit: auto.review_to_final_edit ?? null,
       ticket_quality: auto.ticket_quality ?? null,
+      dispatch_completion: auto.dispatch_completion ?? null,
       quality_issues: auto.totals?.quality_issues ?? null,
     };
     Object.assign(map, valuesMap(valuesQ.data ?? []));
@@ -157,6 +158,7 @@ function Dashboard() {
     const map: Record<string, number | null> = {
       review_to_final_edit: auto.review_to_final_edit ?? null,
       ticket_quality: auto.ticket_quality ?? null,
+      dispatch_completion: auto.dispatch_completion ?? null,
       quality_issues: auto.totals?.quality_issues ?? null,
     };
     Object.assign(map, valuesMap(prevValuesQ.data ?? []));

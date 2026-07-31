@@ -40,6 +40,19 @@ function isExcelFile(file: File) {
   return /\.(xlsx|xls)$/i.test(file.name);
 }
 
+function normalizeTicketStatus(status: unknown) {
+  const value = String(status ?? "").trim().toLowerCase();
+  const compact = value.replace(/[\s_-]+/g, "");
+
+  if (compact === "a" || compact === "active") return "active";
+  if (compact === "r" || compact === "review") return "review";
+  if (compact === "f" || compact === "finaledit" || compact === "finaledited") return "final edit";
+  if (compact === "i" || compact === "invoiced" || compact === "invoice") return "invoiced";
+  if (compact === "v" || compact === "void" || compact === "voided") return "voided";
+
+  return value;
+}
+
 async function insertBatches<T>(rows: T[], insert: (batch: T[]) => Promise<void>) {
   const batches = chunk(rows, 500);
   let nextBatch = 0;
@@ -56,10 +69,14 @@ function buildDemoUploadMetrics(kind: DemoUploadKind, rows: any[], effectiveTo: 
   if (kind === "open_jobs") return undefined;
   const completedRows = rows.filter((row) => !row.void_reason || String(row.void_reason).trim() === "");
   if (kind === "total_tickets") {
+    const statusRows = rows.map((row) => normalizeTicketStatus(row.status));
     return {
       tickets: rows.length,
       finalEdited: rows.filter((row) => row.final_edited_by).length,
       ticketVoids: rows.length - completedRows.length,
+      activeTickets: statusRows.filter((status) => status === "active").length,
+      reviewTickets: statusRows.filter((status) => status === "review").length,
+      finalEditTickets: statusRows.filter((status) => status === "final edit").length,
     };
   }
   const endMs = new Date(`${effectiveTo}T00:00:00`).getTime() + 86400000;
@@ -258,9 +275,12 @@ function UploadsPage() {
           return next;
         });
       }
+      const workbookRows = s.sheet_rows && s.sheet_rows !== s.imported
+        ? ` (${s.sheet_rows} Excel rows including header)`
+        : "";
       const rowSummary = s.source_rows === s.imported
-        ? `${s.imported} data rows imported`
-        : `${s.source_rows} data rows found; ${s.imported} imported${s.skipped ? `, ${s.skipped} skipped` : ""}${s.errors ? `, ${s.errors} errors` : ""}`;
+        ? `${s.imported} data rows imported${workbookRows}`
+        : `${s.source_rows} data rows found; ${s.imported} imported${s.skipped ? `, ${s.skipped} skipped` : ""}${s.errors ? `, ${s.errors} errors` : ""}${workbookRows}`;
       toast.success(rowSummary);
       setUploadStage("");
       setFile(null);

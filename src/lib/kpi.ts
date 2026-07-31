@@ -63,8 +63,8 @@ export async function computeAutoKpis(week: string) {
 
 export async function computeAutoKpisForRange(from: string, to: string) {
   const [ticketsRes, invRes] = await Promise.all([
-    supabase.from("tickets").select("final_edited_by,void_reason,date_recv,kind,raw").gte("week_start", from).lte("week_start", to).eq("kind", "tickets"),
-    supabase.from("tickets").select("final_edited_by,void_reason,date_recv,kind,raw").gte("week_start", from).lte("week_start", to).eq("kind", "invoiced"),
+    supabase.from("tickets").select("final_edited_by,void_reason,date_recv,kind,status,raw").gte("week_start", from).lte("week_start", to).eq("kind", "tickets"),
+    supabase.from("tickets").select("final_edited_by,void_reason,date_recv,kind,status,raw").gte("week_start", from).lte("week_start", to).eq("kind", "invoiced"),
   ]);
   const tickets = (ticketsRes.data ?? []).filter((row) => !isSeededDemoPayload(row.raw));
   const invoiced = (invRes.data ?? []).filter((row) => !isSeededDemoPayload(row.raw));
@@ -73,13 +73,14 @@ export async function computeAutoKpisForRange(from: string, to: string) {
     ? (tickets.filter((r: any) => r.final_edited_by).length / tickets.length) * 100
     : null;
 
-  const qualityIssues = invoiced.filter((r: any) => r.void_reason && String(r.void_reason).trim() !== "").length;
-  const ticketQuality = invoiced.length ? (qualityIssues / invoiced.length) * 100 : null;
+  const qualityRows = invoiced.length > 0 ? invoiced : tickets;
+  const qualityIssues = qualityRows.filter((r: any) => hasValue(r.void_reason)).length;
+  const ticketQuality = qualityRows.length ? (qualityIssues / qualityRows.length) * 100 : null;
 
   const dispatchCompletion = tickets.length
-    ? (tickets.filter((r: any) => !r.void_reason || String(r.void_reason).trim() === "").length / tickets.length) * 100
+    ? (tickets.filter((r: any) => !hasValue(r.void_reason)).length / tickets.length) * 100
     : null;
-  const statusMatches = (status: unknown, value: string) => String(status ?? "").trim().toLowerCase() === value;
+  const statusMatches = (status: unknown, value: string) => normalizeTicketStatus(status) === value;
 
   return {
     review_to_final_edit: reviewFinal,
@@ -90,10 +91,27 @@ export async function computeAutoKpisForRange(from: string, to: string) {
       tickets: tickets.length,
       invoiced: invoiced.length,
       quality_issues: qualityIssues,
-      voided: tickets.filter((r: any) => r.void_reason).length,
+      voided: tickets.filter((r: any) => hasValue(r.void_reason)).length,
       active_tickets: tickets.filter((r: any) => statusMatches(r.status, "active")).length,
       review_tickets: tickets.filter((r: any) => statusMatches(r.status, "review")).length,
       final_edit_tickets: tickets.filter((r: any) => statusMatches(r.status, "final edit")).length,
     },
   };
+}
+
+function hasValue(value: unknown) {
+  return String(value ?? "").trim() !== "";
+}
+
+function normalizeTicketStatus(status: unknown) {
+  const value = String(status ?? "").trim().toLowerCase();
+  const compact = value.replace(/[\s_-]+/g, "");
+
+  if (compact === "a" || compact === "active") return "active";
+  if (compact === "r" || compact === "review") return "review";
+  if (compact === "f" || compact === "finaledit" || compact === "finaledited") return "final edit";
+  if (compact === "i" || compact === "invoiced" || compact === "invoice") return "invoiced";
+  if (compact === "v" || compact === "void" || compact === "voided") return "voided";
+
+  return value;
 }

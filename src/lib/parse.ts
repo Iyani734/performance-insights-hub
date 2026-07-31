@@ -20,6 +20,7 @@ export type ParsedTicket = {
 
 export type ParseStats = {
   source_rows: number;
+  sheet_rows?: number;
   imported: number;
   skipped: number;
   errors: number;
@@ -56,6 +57,12 @@ function daysBetween(dateStr: string | null | undefined): number | undefined {
   return Math.max(0, Math.round((Date.now() - d.getTime()) / 86400000));
 }
 
+function sheetRowCount(sheet: XLSX.WorkSheet): number | undefined {
+  if (!sheet["!ref"]) return undefined;
+  const range = XLSX.utils.decode_range(sheet["!ref"]);
+  return range.e.r - range.s.r + 1;
+}
+
 export async function readWorkbook(file: File): Promise<XLSX.WorkBook> {
   const buf = await file.arrayBuffer();
   return XLSX.read(buf, { cellDates: true });
@@ -64,7 +71,7 @@ export async function readWorkbook(file: File): Promise<XLSX.WorkBook> {
 export function parseTicketsSheet(wb: XLSX.WorkBook): { rows: ParsedTicket[]; stats: ParseStats } {
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const raw = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: null });
-  const stats: ParseStats = { source_rows: raw.length, imported: 0, skipped: 0, errors: 0, error_details: [] };
+  const stats: ParseStats = { source_rows: raw.length, sheet_rows: sheetRowCount(sheet), imported: 0, skipped: 0, errors: 0, error_details: [] };
   const rows: ParsedTicket[] = [];
   raw.forEach((r, i) => {
     try {
@@ -113,8 +120,8 @@ export type ParsedOpenJob = {
 
 // Handles both grouped ("Customer: KEY - Name" section headers) and flat tables.
 export function parseOpenJobsSheet(wb: XLSX.WorkBook): { rows: ParsedOpenJob[]; stats: ParseStats } {
-  const stats: ParseStats = { source_rows: 0, imported: 0, skipped: 0, errors: 0, error_details: [] };
   const sheet = wb.Sheets[wb.SheetNames[0]];
+  const stats: ParseStats = { source_rows: 0, sheet_rows: sheetRowCount(sheet), imported: 0, skipped: 0, errors: 0, error_details: [] };
 
   // First try: keyed rows (typical CSV/XLSX export with headers)
   const keyed = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: null });
