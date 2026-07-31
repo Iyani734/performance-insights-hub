@@ -51,9 +51,9 @@ const METRICS: MetricDefinition[] = [
     target: "<= 3 days",
     source: "Total Tickets uploads filtered to Final Edit",
     formula:
-      "Business days from the oldest Deliver/Pickup date in Final Edit to the selected Effective to date.",
+      "Business days from the oldest Deliver/Pickup date in Final Edit to the selected Effective to date (not today).",
     columns: ["Status", "Deliver/Pickup"],
-    note: "This matches the TCR instructions: select Final Edit, sort by Deliver/Pickup, then count business days back to the oldest date. Example: Jun 10 to Jun 17 is 5 business days.",
+    note: "This matches the TCR instructions: select Final Edit, sort by Deliver/Pickup, then count business days to the final date selected in the calendar. The current date is never used. Example: Jun 10 to Jun 17 is 5 business days.",
   },
   {
     label: "Team Responsiveness (within 1 hour)",

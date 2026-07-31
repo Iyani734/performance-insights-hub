@@ -125,9 +125,13 @@ export function calculateReviewToFinalEdit(tickets: TicketLike[], from: string, 
   return (reviewed / tickets.length) * 100;
 }
 
-export function calculateInvoiceCycleTime(tickets: TicketLike[], reportDateIso: string) {
-  const reportDate = toDate(`${reportDateIso}T00:00:00Z`);
-  if (!reportDate) return null;
+/**
+ * Count from the oldest Final Edit delivery/pickup date through the report's
+ * selected Effective to date. This calculation must not depend on today's date.
+ */
+export function calculateInvoiceCycleTime(tickets: TicketLike[], effectiveToIso: string) {
+  const effectiveTo = toDate(`${effectiveToIso}T00:00:00Z`);
+  if (!effectiveTo) return null;
 
   const finalEditRows = tickets.filter((row) => isFinalEditTicket(row));
   const sourceRows = finalEditRows.length
@@ -142,7 +146,7 @@ export function calculateInvoiceCycleTime(tickets: TicketLike[], reportDateIso: 
     date.getTime() < oldest.getTime() ? date : oldest,
   );
 
-  return businessDaysBetween(oldestDeliverPickup, reportDate);
+  return businessDaysBetween(oldestDeliverPickup, effectiveTo);
 }
 
 export function calculateTicketQuality(

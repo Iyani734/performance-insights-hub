@@ -33,9 +33,9 @@ const METRICS: MetricSpec[] = [
     label: "Invoice Cycle Time (Final Edit to Invoice)",
     target: "<= 3 days",
     source: "Total Tickets export filtered to Final Edit",
-    formula: "business days from oldest Final Edit Deliver/Pickup date to selected To date",
+    formula: "business days from oldest Final Edit Deliver/Pickup date to selected To date, not today's date",
     columns: ["Status", "Deliver/Pickup"],
-    why: "This follows the ARC TCR instruction: select Final Edit, sort by Deliver/Pickup, then count business days back to the oldest date. June 10 to June 17 counts as 5 business days.",
+    why: "This follows the ARC TCR instruction: select Final Edit, sort by Deliver/Pickup, then count business days to the To date selected in the calendar. It never uses today's date. June 10 to June 17 counts as 5 business days.",
   },
   {
     key: "review_to_final_edit",
