@@ -48,16 +48,16 @@ const METRICS: MetricDefinition[] = [
   {
     label: "Ticket Quality %",
     source: "Total Invoiced uploads",
-    formula: "Invoiced rows with a populated Void Reason / all invoiced rows x 100.",
+    formula: "Invoiced rows with a blank Void Reason / all invoiced rows x 100.",
     columns: ["Void Reason"],
-    note: "Lower is better. The app currently treats a void reason as a quality issue.",
+    note: "Higher is better. A populated Void Reason is counted separately as a quality issue.",
   },
   {
     label: "Quality Issues",
     source: "Total Invoiced uploads",
     formula: "Count invoiced rows where Void Reason is populated.",
     columns: ["Void Reason"],
-    note: "This is the count behind the Quality Issues card and the numerator for Ticket Quality %.",
+    note: "This is the count behind the Quality Issues card and the rows excluded from Ticket Quality %.",
   },
   {
     label: "Invoice Cycle Time",

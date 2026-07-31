@@ -65,10 +65,10 @@ export const DEMO_TARGETS: KpiTarget[] = [
     owner: "QA",
     cadence: "Weekly",
     unit: "%",
-    direction: "lower_is_better",
-    green_min: 2,
-    yellow_min: 5,
-    target_display: "<= 2%",
+    direction: "higher_is_better",
+    green_min: 95,
+    yellow_min: 85,
+    target_display: ">= 95%",
     auto: true,
     sort_order: 2,
   },
@@ -104,7 +104,7 @@ export const DEMO_TARGETS: KpiTarget[] = [
 
 const DEMO_SERIES: Record<string, number[]> = {
   review_to_final_edit: [97.8, 97.4, 96.8, 96.2],
-  ticket_quality: [1.1, 1.3, 1.5, 1.8],
+  ticket_quality: [98.9, 98.7, 98.5, 98.2],
   invoice_cycle_time: [2.0, 2.2, 2.4, 2.7],
   dispatch_completion: [98.5, 98.1, 97.7, 97.2],
 };
@@ -295,7 +295,7 @@ function localDemoAutoKpisForRange(range: DateRangeValue) {
 
   return {
     review_to_final_edit: metrics.hasTickets && metrics.tickets > 0 ? (metrics.finalEdited / metrics.tickets) * 100 : null,
-    ticket_quality: metrics.hasInvoiced && metrics.invoiced > 0 ? (metrics.invoiceQualityIssues / metrics.invoiced) * 100 : null,
+    ticket_quality: metrics.hasInvoiced && metrics.invoiced > 0 ? ((metrics.invoiced - metrics.invoiceQualityIssues) / metrics.invoiced) * 100 : null,
     invoice_cycle_time: metrics.invoiceCycleCount > 0 ? metrics.invoiceCycleDaysTotal / metrics.invoiceCycleCount : null,
     dispatch_completion: metrics.hasTickets && metrics.tickets > 0 ? ((metrics.tickets - metrics.ticketVoids) / metrics.tickets) * 100 : null,
     totals: {
@@ -358,7 +358,7 @@ export function demoKpiValuesWithLocal() {
         id: `${upload.id}-quality`,
         kpi_key: "ticket_quality",
         week_start,
-        actual: ((m.invoiceQualityIssues ?? 0) / m.invoiced) * 100,
+        actual: ((m.invoiced - (m.invoiceQualityIssues ?? 0)) / m.invoiced) * 100,
         source: "demo-upload",
         entered_by: null,
         created_at,

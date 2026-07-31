@@ -74,7 +74,7 @@ export async function computeAutoKpisForRange(from: string, to: string) {
     : null;
 
   const qualityIssues = invoiced.filter((r: any) => r.void_reason && String(r.void_reason).trim() !== "").length;
-  const ticketQuality = invoiced.length ? (qualityIssues / invoiced.length) * 100 : null;
+  const ticketQuality = invoiced.length ? ((invoiced.length - qualityIssues) / invoiced.length) * 100 : null;
 
   const now = new Date(to + "T00:00:00Z").getTime() + 86400000;
   const cycleDays = invoiced

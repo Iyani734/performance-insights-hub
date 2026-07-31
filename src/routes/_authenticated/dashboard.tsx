@@ -48,6 +48,7 @@ function periodLabel(range: DateRangeValue) {
 function valuesMap(rows: any[]) {
   const map: Record<string, number | null> = {};
   for (const v of rows) {
+    if (v.source === "auto") continue;
     map[v.kpi_key] = v.actual != null ? Number(v.actual) : null;
   }
   return map;
@@ -147,7 +148,7 @@ function Dashboard() {
       ticket_quality: auto.ticket_quality ?? null,
       invoice_cycle_time: auto.invoice_cycle_time ?? null,
       dispatch_completion: auto.dispatch_completion ?? null,
-      quality_issues: auto.ticket_quality ?? null,
+      quality_issues: auto.totals?.quality_issues ?? null,
       incomplete_tickets: auto.dispatch_completion != null ? Math.max(0, 100 - auto.dispatch_completion) : null,
     };
     Object.assign(map, valuesMap(valuesQ.data ?? []));
@@ -161,7 +162,7 @@ function Dashboard() {
       ticket_quality: auto.ticket_quality ?? null,
       invoice_cycle_time: auto.invoice_cycle_time ?? null,
       dispatch_completion: auto.dispatch_completion ?? null,
-      quality_issues: auto.ticket_quality ?? null,
+      quality_issues: auto.totals?.quality_issues ?? null,
       incomplete_tickets: auto.dispatch_completion != null ? Math.max(0, 100 - auto.dispatch_completion) : null,
     };
     Object.assign(map, valuesMap(prevValuesQ.data ?? []));
