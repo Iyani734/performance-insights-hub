@@ -289,11 +289,11 @@ function Dashboard() {
             const DeltaIcon = d == null ? Minus : good ? ArrowUp : ArrowDown;
             const color = r.status === "green" ? "border-l-success" : r.status === "yellow" ? "border-l-warning" : r.status === "red" ? "border-l-destructive" : "border-l-muted";
             return (
-              <div key={r.target.id} className={`p-4 rounded-lg border border-l-4 ${color} bg-card`}>
-                <div className="flex items-start justify-between gap-2">
+              <div key={r.target.id} className={`h-full min-h-[210px] rounded-lg border border-l-4 p-4 ${color} bg-card`}>
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
                   <div className="min-w-0">
-                    <div className="text-xs text-muted-foreground uppercase tracking-wide">{r.target.owner ?? r.target.cadence}</div>
-                    <div className="font-medium truncate">{r.target.label}</div>
+                    <div className="break-words text-xs uppercase tracking-wide text-muted-foreground">{r.target.owner ?? r.target.cadence}</div>
+                    <div className="mt-1 break-words font-medium leading-snug">{r.target.label}</div>
                   </div>
                   <StatusPill status={r.status} />
                 </div>
@@ -328,8 +328,8 @@ function Dashboard() {
             {focus.map(r => (
               <div key={r.target.id} className="flex items-center gap-3 text-sm">
                 <StatusPill status={r.status} />
-                <span className="font-medium">{r.target.label}</span>
-                <span className="text-muted-foreground ml-auto">{formatKpi(r.actual, r.target)}</span>
+                <span className="min-w-0 flex-1 break-words font-medium">{r.target.label}</span>
+                <span className="ml-auto shrink-0 text-muted-foreground">{formatKpi(r.actual, r.target)}</span>
               </div>
             ))}
           </div>
