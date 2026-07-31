@@ -167,65 +167,85 @@ function UploadsPage() {
       const filePath = `${uploadBucket}/${Date.now()}-${selectedFile.name}`;
       setUploadStage("Uploading file and creating report...");
       const storageUpload = supabase.storage.from("report-files").upload(filePath, selectedFile, { upsert: false });
-      const reportInsert = Promise.resolve(supabase.from("report_uploads")
-        .insert({ kind, week_start: uploadBucket, file_name: selectedFile.name, uploaded_by: user.id, row_count: 0, status: "processing", file_path: filePath, effective_from: effectiveFrom, effective_to: effectiveTo } as any)
-        .select().single());
-      const wb = await workbookPromise;
-      setUploadStage("Checking rows...");
-      const parsed = kind === "open_jobs" ? parseOpenJobsSheet(wb) : parseTicketsSheet(wb);
-      const [{ error: storageError }, { data: up, error: reportError }] = await Promise.all([storageUpload, reportInsert]);
-      if (storageError || reportError || !up) {
-        if (up) await supabase.from("report_uploads").delete().eq("id", up.id);
+      let parsed;
+      try {
+        const wb = await workbookPromise;
+        setUploadStage("Checking rows...");
+        parsed = kind === "open_jobs" ? parseOpenJobsSheet(wb) : parseTicketsSheet(wb);
+      } catch (error) {
+        const { error: storageError } = await storageUpload;
         if (!storageError) await supabase.storage.from("report-files").remove([filePath]);
-        throw storageError ?? reportError ?? new Error("Could not create the upload record.");
+        throw error;
+      }
+      const { error: storageError } = await storageUpload;
+      if (storageError) throw new Error(`Could not store the original file: ${storageError.message}`);
+      const { data: up, error: reportError } = await supabase.from("report_uploads")
+        .insert({ kind, week_start: uploadBucket, file_name: selectedFile.name, uploaded_by: user.id, row_count: 0, status: "processing", file_path: filePath, effective_from: effectiveFrom, effective_to: effectiveTo } as any)
+        .select().single();
+      if (reportError || !up) {
+        await supabase.storage.from("report-files").remove([filePath]);
+        throw reportError ?? new Error("Could not create the upload record.");
       }
       let stats;
-      if (kind === "open_jobs") {
-        stats = parsed.stats;
-        const payload = parsed.rows.map(r => ({ ...r, upload_id: up.id, week_start: uploadBucket }));
-        setUploadStage(`Importing ${payload.length} rows...`);
-        await insertBatches(payload, async (batch) => {
-          const { error } = await supabase.from("open_jobs").insert(batch as any);
-          if (error) throw error;
-        });
-      } else {
-        stats = parsed.stats;
-        const tKind = kind === "total_tickets" ? "tickets" : "invoiced";
-        const payload = parsed.rows.map(r => ({ ...r, upload_id: up.id, week_start: uploadBucket, kind: tKind, raw: r.raw }));
-        setUploadStage(`Importing ${payload.length} rows...`);
-        await insertBatches(payload, async (batch) => {
-          const { error } = await supabase.from("tickets").insert(batch as any);
-          if (error) throw error;
-        });
-        setUploadStage("Calculating dashboard metrics...");
-        const { computeAutoKpisForRange } = await import("@/lib/kpi");
-        const auto = await computeAutoKpisForRange(uploadBucket, effectiveTo);
-        const upserts = [
-          { kpi_key: "review_to_final_edit", actual: auto.review_to_final_edit },
-          { kpi_key: "ticket_quality", actual: auto.ticket_quality },
-        ].filter(v => v.actual != null).map(v => ({ ...v, week_start: uploadBucket, source: "auto", entered_by: user.id }));
-        const kpiWrite = upserts.length
-          ? Promise.resolve(supabase.from("kpi_values").upsert(upserts, { onConflict: "kpi_key,week_start" }))
-          : Promise.resolve({ error: null });
+      try {
+        if (kind === "open_jobs") {
+          stats = parsed.stats;
+          const payload = parsed.rows.map(r => ({ ...r, upload_id: up.id, week_start: uploadBucket }));
+          setUploadStage(`Importing ${payload.length} rows...`);
+          await insertBatches(payload, async (batch) => {
+            const { error } = await supabase.from("open_jobs").insert(batch as any);
+            if (error) throw error;
+          });
+        } else {
+          stats = parsed.stats;
+          const tKind = kind === "total_tickets" ? "tickets" : "invoiced";
+          const payload = parsed.rows.map(r => ({ ...r, upload_id: up.id, week_start: uploadBucket, kind: tKind, raw: r.raw }));
+          setUploadStage(`Importing ${payload.length} rows...`);
+          await insertBatches(payload, async (batch) => {
+            const { error } = await supabase.from("tickets").insert(batch as any);
+            if (error) throw error;
+          });
+          setUploadStage("Calculating dashboard metrics...");
+          const { computeAutoKpisForRange } = await import("@/lib/kpi");
+          const auto = await computeAutoKpisForRange(uploadBucket, effectiveTo);
+          const upserts = [
+            { kpi_key: "review_to_final_edit", actual: auto.review_to_final_edit },
+            { kpi_key: "ticket_quality", actual: auto.ticket_quality },
+          ].filter(v => v.actual != null).map(v => ({ ...v, week_start: uploadBucket, source: "auto", entered_by: user.id }));
+          const kpiWrite = upserts.length
+            ? Promise.resolve(supabase.from("kpi_values").upsert(upserts, { onConflict: "kpi_key,week_start" }))
+            : Promise.resolve({ error: null });
+          const dt = Math.round(performance.now() - t0);
+          const reportWrite = supabase.from("report_uploads").update({
+            row_count: stats.imported, rows_skipped: stats.skipped, errors_count: stats.errors,
+            processing_ms: dt, error_details: stats.error_details as any,
+            status: stats.errors > 0 ? "partial" : "success",
+          }).eq("id", up.id);
+          const [kpiResult, reportResult] = await Promise.all([kpiWrite, reportWrite]);
+          if (kpiResult.error) throw kpiResult.error;
+          if (reportResult.error) throw reportResult.error;
+          return { stats };
+        }
         const dt = Math.round(performance.now() - t0);
         const reportWrite = supabase.from("report_uploads").update({
           row_count: stats.imported, rows_skipped: stats.skipped, errors_count: stats.errors,
           processing_ms: dt, error_details: stats.error_details as any,
           status: stats.errors > 0 ? "partial" : "success",
         }).eq("id", up.id);
-        const [kpiResult, reportResult] = await Promise.all([kpiWrite, reportWrite]);
-        if (kpiResult.error) throw kpiResult.error;
-        if (reportResult.error) throw reportResult.error;
+        const { error: reportUpdateError } = await reportWrite;
+        if (reportUpdateError) throw reportUpdateError;
         return { stats };
+      } catch (error: any) {
+        const reason = error?.message ?? "Upload processing failed";
+        const details = [...(stats?.error_details ?? []), { row: 0, reason }];
+        await supabase.from("report_uploads").update({
+          status: "failed",
+          errors_count: Math.max(1, stats?.errors ?? 0),
+          error_details: details,
+          processing_ms: Math.round(performance.now() - t0),
+        }).eq("id", up.id);
+        throw error;
       }
-      const dt = Math.round(performance.now() - t0);
-      const { error: updateError } = await supabase.from("report_uploads").update({
-        row_count: stats.imported, rows_skipped: stats.skipped, errors_count: stats.errors,
-        processing_ms: dt, error_details: stats.error_details as any,
-        status: stats.errors > 0 ? "partial" : "success",
-      }).eq("id", up.id);
-      if (updateError) throw updateError;
-      return { stats };
     },
     onSuccess: ({ stats: s, demoUpload }) => {
       if (demoUpload) {
@@ -403,6 +423,9 @@ function UploadsPage() {
                 const uploaderName = uploader?.name ?? (u.file_name?.startsWith("demo-") ? DEMO_UPLOADERS[index % DEMO_UPLOADERS.length] : "Unknown");
                 const pending = pendingByUpload.get(u.id);
                 const isMine = user?.id === u.uploaded_by;
+                const uploadStatus = u.status === "processing" && Date.now() - new Date(u.created_at).getTime() > 5 * 60 * 1000
+                  ? "failed"
+                  : u.status;
                 return (
                   <tr key={u.id} className="border-t hover:bg-muted/30">
                     <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{new Date(u.created_at).toLocaleString()}</td>
@@ -420,9 +443,10 @@ function UploadsPage() {
                     <td className="px-4 py-2.5 text-right font-medium">{u.row_count ?? 0}</td>
                     <td className={`px-4 py-2.5 text-right ${(u.errors_count ?? 0) > 0 ? "text-destructive font-medium" : "text-muted-foreground"}`}>{u.errors_count ?? 0}</td>
                     <td className="px-4 py-2.5">
-                      {u.status === "success" && <span className="inline-flex items-center gap-1 text-success text-xs font-medium"><CheckCircle2 className="w-3.5 h-3.5" />Success</span>}
-                      {u.status === "partial" && <span className="inline-flex items-center gap-1 text-warning text-xs font-medium"><AlertTriangle className="w-3.5 h-3.5" />Partial</span>}
-                      {u.status === "processing" && <span className="text-muted-foreground text-xs">Processing…</span>}
+                      {uploadStatus === "success" && <span className="inline-flex items-center gap-1 text-success text-xs font-medium"><CheckCircle2 className="w-3.5 h-3.5" />Success</span>}
+                      {uploadStatus === "partial" && <span className="inline-flex items-center gap-1 text-warning text-xs font-medium"><AlertTriangle className="w-3.5 h-3.5" />Partial</span>}
+                      {uploadStatus === "failed" && <span className="inline-flex items-center gap-1 text-destructive text-xs font-medium"><AlertTriangle className="w-3.5 h-3.5" />Failed</span>}
+                      {uploadStatus === "processing" && <span className="text-muted-foreground text-xs">Processing…</span>}
                     </td>
                     <td className="px-4 py-2.5 text-right whitespace-nowrap">
                       {u.file_path && <Button size="sm" variant="ghost" onClick={() => downloadFile(u)} title="Download"><Download className="w-4 h-4" /></Button>}
