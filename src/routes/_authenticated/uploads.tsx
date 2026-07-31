@@ -207,7 +207,7 @@ function UploadsPage() {
           });
           setUploadStage("Calculating dashboard metrics...");
           const { computeAutoKpisForRange } = await import("@/lib/kpi");
-          const auto = await computeAutoKpisForRange(uploadBucket, effectiveTo);
+          const auto = await computeAutoKpisForRange(effectiveFrom, effectiveTo);
           const upserts = [
             { kpi_key: "review_to_final_edit", actual: auto.review_to_final_edit },
             { kpi_key: "ticket_quality", actual: auto.ticket_quality },
@@ -238,12 +238,15 @@ function UploadsPage() {
       } catch (error: any) {
         const reason = error?.message ?? "Upload processing failed";
         const details = [...(stats?.error_details ?? []), { row: 0, reason }];
-        await supabase.from("report_uploads").update({
+        const { error: failedStatusError } = await supabase.from("report_uploads").update({
           status: "failed",
           errors_count: Math.max(1, stats?.errors ?? 0),
           error_details: details,
           processing_ms: Math.round(performance.now() - t0),
         }).eq("id", up.id);
+        if (failedStatusError) {
+          throw new Error(`${reason}. The upload could not be marked as failed: ${failedStatusError.message}`);
+        }
         throw error;
       }
     },
