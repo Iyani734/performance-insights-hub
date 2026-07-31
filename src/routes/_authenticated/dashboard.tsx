@@ -146,10 +146,7 @@ function Dashboard() {
     const map: Record<string, number | null> = {
       review_to_final_edit: auto.review_to_final_edit ?? null,
       ticket_quality: auto.ticket_quality ?? null,
-      invoice_cycle_time: auto.invoice_cycle_time ?? null,
-      dispatch_completion: auto.dispatch_completion ?? null,
       quality_issues: auto.totals?.quality_issues ?? null,
-      incomplete_tickets: auto.dispatch_completion != null ? Math.max(0, 100 - auto.dispatch_completion) : null,
     };
     Object.assign(map, valuesMap(valuesQ.data ?? []));
     return map;
@@ -160,10 +157,7 @@ function Dashboard() {
     const map: Record<string, number | null> = {
       review_to_final_edit: auto.review_to_final_edit ?? null,
       ticket_quality: auto.ticket_quality ?? null,
-      invoice_cycle_time: auto.invoice_cycle_time ?? null,
-      dispatch_completion: auto.dispatch_completion ?? null,
       quality_issues: auto.totals?.quality_issues ?? null,
-      incomplete_tickets: auto.dispatch_completion != null ? Math.max(0, 100 - auto.dispatch_completion) : null,
     };
     Object.assign(map, valuesMap(prevValuesQ.data ?? []));
     return map;
@@ -173,7 +167,7 @@ function Dashboard() {
   const summary = useMemo(() => overallScore(rows), [rows]);
   const focus = useMemo(() => focusAreas(rows), [rows]);
 
-  const totals = autoQ.data?.totals ?? { tickets: 0, invoiced: 0, quality_issues: 0, voided: 0 };
+  const totals = autoQ.data?.totals ?? { tickets: 0, invoiced: 0, quality_issues: 0, voided: 0, active_tickets: 0, review_tickets: 0, final_edit_tickets: 0 };
   const noData = !validRange || (totals.tickets === 0 && totals.invoiced === 0);
 
   const [editingKpi, setEditingKpi] = useState<KpiTarget | null>(null);
@@ -272,10 +266,10 @@ function Dashboard() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard icon={Ticket} label="Active Tickets" value={totals.tickets} accent="text-primary" />
-        <StatCard icon={CheckCircle2} label="Tickets Invoiced" value={totals.invoiced} accent="text-success" />
+        <StatCard icon={Ticket} label="Active Tickets" value={totals.active_tickets} accent="text-primary" />
+        <StatCard icon={Ticket} label="Review Tickets" value={totals.review_tickets} accent="text-warning" />
+        <StatCard icon={CheckCircle2} label="Final Edit Tickets" value={totals.final_edit_tickets} accent="text-success" />
         <StatCard icon={AlertTriangle} label="Quality Issues" value={totals.quality_issues} accent="text-warning" />
-        <StatCard icon={DollarSign} label="Voided" value={totals.voided} accent="text-destructive" />
       </div>
 
       {/* Operational Summary */}

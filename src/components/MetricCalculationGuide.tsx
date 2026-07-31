@@ -3,6 +3,9 @@ import { Card } from "@/components/ui/card";
 
 type MetricDefinition = {
   label: string;
+  owner: string;
+  cadence: string;
+  target: string;
   source: string;
   formula: string;
   columns: string[];
@@ -11,88 +14,94 @@ type MetricDefinition = {
 
 const METRICS: MetricDefinition[] = [
   {
-    label: "Total Tickets",
-    source: "Total Tickets uploads",
-    formula: "Count all stored ticket rows whose upload bucket falls in the selected dashboard date range.",
-    columns: [],
-    note: "This is the current value behind the Active Tickets card. It is a total count and does not filter by ticket Status.",
-  },
-  {
-    label: "Tickets Invoiced",
-    source: "Total Invoiced uploads",
-    formula: "Count all stored invoiced rows whose upload bucket falls in the selected dashboard date range.",
-    columns: [],
-    note: "Each row is counted once after it is uploaded as Total Invoiced.",
-  },
-  {
-    label: "Voided",
-    source: "Total Tickets uploads",
-    formula: "Count tickets where Void Reason is populated.",
-    columns: ["Void Reason"],
-    note: "A blank Void Reason is not counted as a void.",
-  },
-  {
-    label: "Review -> Final Edit %",
+    label: "Tickets Moving Through - Review to Final Edit",
+    owner: "Dispatch",
+    cadence: "Weekly",
+    target: ">= 95%",
     source: "Total Tickets uploads",
     formula: "Tickets with Final Edited By or FinalEditedBy populated / all tickets x 100.",
     columns: ["Final Edited By", "FinalEditedBy"],
-    note: "The export does not include a separate review-status field, so this measures final-edit completion.",
+    note: "This is the available automation for the tracker goal. The exact day-prior review queue requires a Review Date or queue timestamp that is not in the current export.",
   },
   {
-    label: "Dispatch Completion %",
-    source: "Total Tickets uploads",
-    formula: "Tickets with a blank Void Reason / all tickets x 100.",
-    columns: ["Void Reason"],
-    note: "This is currently a not-voided rate. It is not a separate dispatch-status calculation.",
-  },
-  {
-    label: "Ticket Quality %",
+    label: "Ticket Quality",
+    owner: "Dispatch/Drivers",
+    cadence: "Monthly",
+    target: "< 3%",
     source: "Total Invoiced uploads",
-    formula: "Invoiced rows with a blank Void Reason / all invoiced rows x 100.",
+    formula: "Invoiced rows with a populated Void Reason / all invoiced rows x 100.",
     columns: ["Void Reason"],
-    note: "Higher is better. A populated Void Reason is counted separately as a quality issue.",
+    note: "Lower is better. Void Reason is the quality-error flag available in the current Total Invoiced export.",
   },
   {
     label: "Quality Issues",
+    owner: "Dispatch/Drivers",
+    cadence: "Monthly",
+    target: "Supporting count",
     source: "Total Invoiced uploads",
     formula: "Count invoiced rows where Void Reason is populated.",
     columns: ["Void Reason"],
-    note: "This is the count behind the Quality Issues card and the rows excluded from Ticket Quality %.",
+    note: "This is the numerator behind Ticket Quality and the Quality Issues dashboard count; it is not a separate tracker target.",
   },
   {
-    label: "Invoice Cycle Time",
-    source: "Total Invoiced uploads",
-    formula: "Average number of days from Date Recv to the day after the selected end date.",
-    columns: ["Date Recv"],
-    note: "Rows without a valid Date Recv are excluded from the average.",
+    label: "Invoice Cycle Time (Final Edit to Invoice)",
+    owner: "Invoicing",
+    cadence: "Weekly",
+    target: "<= 3 days",
+    source: "Manual entry until timestamp fields are supplied",
+    formula: "Invoice timestamp - Final Edit timestamp, averaged across completed invoices.",
+    columns: ["Final Edit timestamp", "Invoice timestamp"],
+    note: "The current Total Invoiced file has Date Recv but not both required timestamps, so the previous Date Recv estimate is no longer used as this KPI.",
   },
   {
-    label: "Incomplete Tickets %",
-    source: "Derived from Dispatch Completion",
-    formula: "100 - Dispatch Completion %.",
-    columns: ["Void Reason"],
-    note: "It is the inverse of the current not-voided dispatch measure.",
+    label: "Team Responsiveness (within 1 hour)",
+    owner: "Dispatch Service Quality",
+    cadence: "Daily",
+    target: ">= 95%",
+    source: "Manual entry until request and response timestamps are supplied",
+    formula: "Requests responded to within 1 hour / all requests x 100.",
+    columns: ["Request timestamp", "First response timestamp"],
+    note: "The current exports do not contain both timestamps, so this is recorded manually for now.",
   },
   {
-    label: "Driver Safety Violations",
+    label: "Safety",
+    owner: "Drivers",
+    cadence: "Monthly",
+    target: "<= 20",
     source: "Manual entry",
     formula: "A manager-entered count for the selected date range.",
     columns: [],
-    note: "No ticket-export column currently supplies this value.",
+    note: "Record the total safety events, including speeding violations, for the month.",
   },
   {
-    label: "Missed Jobs",
-    source: "Manual entry",
-    formula: "A manager-entered count for the selected date range.",
-    columns: [],
-    note: "No ticket-export column currently supplies this value.",
+    label: "Incomplete Tickets",
+    owner: "Drivers",
+    cadence: "Monthly",
+    target: "<= 10",
+    source: "Manual entry until the required fields are supplied",
+    formula: "Count tickets missing labour time or internal notes.",
+    columns: ["Labour Time", "Internal Notes"],
+    note: "The current exports do not consistently provide these columns, so the dashboard no longer treats a voided ticket as incomplete.",
   },
   {
-    label: "Dispatch Responsiveness",
+    label: "Missed Jobs / Late Jobs / Client Callbacks / Reworks",
+    owner: "Job Service Quality",
+    cadence: "Monthly",
+    target: "<= 1",
     source: "Manual entry",
-    formula: "A manager-entered average number of hours for the selected date range.",
+    formula: "Missed jobs + late jobs + client callbacks + reworks for the selected month.",
     columns: [],
-    note: "This needs request and dispatch timestamps that are not present in the current exports.",
+    note: "Record one total monthly count across these four job service quality categories.",
+  },
+  {
+    label: "Ticket Status Snapshot",
+    owner: "Dispatch",
+    cadence: "Current view",
+    target: "No target",
+    source: "Total Tickets uploads",
+    formula: "Count ticket Status values matching Active, Review, and Final Edit.",
+    columns: ["Status"],
+    note: "The dashboard counts exact Active, Review, and Final Edit status values from Total Tickets uploads.",
   },
 ];
 
@@ -106,7 +115,7 @@ export function MetricCalculationGuide() {
             <span className="text-sm font-medium">Calculation definitions</span>
           </div>
           <p className="mt-2 text-sm text-muted-foreground">
-            These are the current live definitions for dashboard values. Automatic calculations use the selected dashboard date range and the report type chosen during upload. Ticket dates inside the workbook are not yet used as the dashboard filter.
+            These definitions align the dashboard to the Performance Tracker. Automatic calculations use the selected dashboard date range and the report type chosen during upload; each manual KPI names the source fields still required for automation.
           </p>
         </div>
         <div className="border-l-0 md:border-l md:pl-4">
@@ -126,6 +135,7 @@ export function MetricCalculationGuide() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="font-display text-lg font-semibold">{metric.label}</h2>
+                <p className="mt-1 text-sm text-muted-foreground">{metric.owner} · {metric.cadence} · Target {metric.target}</p>
                 <p className="mt-1 text-sm text-muted-foreground">{metric.source}</p>
               </div>
               <PencilLine className="h-4 w-4 text-muted-foreground" aria-hidden="true" />

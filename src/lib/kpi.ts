@@ -33,7 +33,7 @@ export function computeStatus(actual: number | null | undefined, t: KpiTarget): 
 
 export function formatKpi(actual: number | null | undefined, t: KpiTarget): string {
   if (actual == null || Number.isNaN(actual)) return "—";
-  const digits = t.unit === "days" ? 1 : 1;
+  const digits = t.unit === "count" ? 0 : 1;
   const n = Number(actual).toFixed(digits);
   return t.unit === "%" ? `${n}%` : t.unit === "days" ? `${n} d` : n;
 }
@@ -74,28 +74,26 @@ export async function computeAutoKpisForRange(from: string, to: string) {
     : null;
 
   const qualityIssues = invoiced.filter((r: any) => r.void_reason && String(r.void_reason).trim() !== "").length;
-  const ticketQuality = invoiced.length ? ((invoiced.length - qualityIssues) / invoiced.length) * 100 : null;
-
-  const now = new Date(to + "T00:00:00Z").getTime() + 86400000;
-  const cycleDays = invoiced
-    .map((r: any) => r.date_recv ? (now - new Date(r.date_recv).getTime()) / 86400000 : null)
-    .filter((n: number | null): n is number => n != null && n >= 0);
-  const invoiceCycle = cycleDays.length ? cycleDays.reduce((a, b) => a + b, 0) / cycleDays.length : null;
+  const ticketQuality = invoiced.length ? (qualityIssues / invoiced.length) * 100 : null;
 
   const dispatchCompletion = tickets.length
     ? (tickets.filter((r: any) => !r.void_reason || String(r.void_reason).trim() === "").length / tickets.length) * 100
     : null;
+  const statusMatches = (status: unknown, value: string) => String(status ?? "").trim().toLowerCase() === value;
 
   return {
     review_to_final_edit: reviewFinal,
     ticket_quality: ticketQuality,
-    invoice_cycle_time: invoiceCycle,
+    invoice_cycle_time: null,
     dispatch_completion: dispatchCompletion,
     totals: {
       tickets: tickets.length,
       invoiced: invoiced.length,
       quality_issues: qualityIssues,
       voided: tickets.filter((r: any) => r.void_reason).length,
+      active_tickets: tickets.filter((r: any) => statusMatches(r.status, "active")).length,
+      review_tickets: tickets.filter((r: any) => statusMatches(r.status, "review")).length,
+      final_edit_tickets: tickets.filter((r: any) => statusMatches(r.status, "final edit")).length,
     },
   };
 }

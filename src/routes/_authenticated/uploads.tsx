@@ -203,10 +203,6 @@ function UploadsPage() {
         const upserts = [
           { kpi_key: "review_to_final_edit", actual: auto.review_to_final_edit },
           { kpi_key: "ticket_quality", actual: auto.ticket_quality },
-          { kpi_key: "invoice_cycle_time", actual: auto.invoice_cycle_time },
-          { kpi_key: "dispatch_completion", actual: auto.dispatch_completion },
-          { kpi_key: "quality_issues", actual: auto.totals.quality_issues },
-          { kpi_key: "incomplete_tickets", actual: auto.dispatch_completion != null ? Math.max(0, 100 - auto.dispatch_completion) : null },
         ].filter(v => v.actual != null).map(v => ({ ...v, week_start: uploadBucket, source: "auto", entered_by: user.id }));
         const kpiWrite = upserts.length
           ? Promise.resolve(supabase.from("kpi_values").upsert(upserts, { onConflict: "kpi_key,week_start" }))
