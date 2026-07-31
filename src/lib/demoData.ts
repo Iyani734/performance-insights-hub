@@ -37,11 +37,17 @@ function rangeOverlaps(aFrom: string, aTo: string, bFrom: string, bTo: string) {
 }
 
 function formatDemoDate(iso: string) {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 export const DEMO_CURRENT_WEEK = defaultLast7DaysRange().from;
-export const DEMO_WEEKS = Array.from({ length: 4 }, (_, index) => addDays(DEMO_CURRENT_WEEK, index * -7));
+export const DEMO_WEEKS = Array.from({ length: 4 }, (_, index) =>
+  addDays(DEMO_CURRENT_WEEK, index * -7),
+);
 
 export const DEMO_TARGETS: KpiTarget[] = [
   {
@@ -167,6 +173,10 @@ export type DemoUploadMetrics = {
   invoiceQualityIssues?: number;
   invoiceCycleDaysTotal?: number;
   invoiceCycleCount?: number;
+  reviewToFinalEdit?: number | null;
+  ticketQuality?: number | null;
+  qualityIssues?: number;
+  invoiceCycleTime?: number | null;
 };
 
 export type DemoUploadRecord = {
@@ -191,12 +201,27 @@ export type DemoUploadRecord = {
 export const DEMO_LOCAL_UPLOADS_KEY = "perf-tracker-demo-uploads";
 
 const DEMO_CUSTOMERS = [
-  ["ACMEHEALTH", "Acme Health Network", "operations@acmehealth.example", ["dispatch@acmehealth.example", "billing@acmehealth.example"]],
+  [
+    "ACMEHEALTH",
+    "Acme Health Network",
+    "operations@acmehealth.example",
+    ["dispatch@acmehealth.example", "billing@acmehealth.example"],
+  ],
   ["NORTHSTAR", "Northstar Facilities", "service@northstar.example", ["ops@northstar.example"]],
-  ["MERIDIAN", "Meridian Retail Group", "maintenance@meridian.example", ["regional@meridian.example", "finance@meridian.example"]],
+  [
+    "MERIDIAN",
+    "Meridian Retail Group",
+    "maintenance@meridian.example",
+    ["regional@meridian.example", "finance@meridian.example"],
+  ],
   ["HARBOR", "Harbor Logistics", "facilities@harbor.example", ["yardops@harbor.example"]],
   ["SUMMIT", "Summit Hospitality", "engineering@summit.example", ["gm@summit.example"]],
-  ["VERDANT", "Verdant Public Works", "publicworks@verdant.example", ["fieldops@verdant.example", "procurement@verdant.example"]],
+  [
+    "VERDANT",
+    "Verdant Public Works",
+    "publicworks@verdant.example",
+    ["fieldops@verdant.example", "procurement@verdant.example"],
+  ],
 ] as const;
 
 export function demoKpiValues() {
@@ -279,8 +304,9 @@ export function saveDemoLocalUploads(rows: DemoUploadRecord[]) {
 }
 
 export function demoUploadsWithLocal(): DemoUploadRecord[] {
-  return [...loadDemoLocalUploads(), ...demoUploads()]
-    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  return [...loadDemoLocalUploads(), ...demoUploads()].sort((a, b) =>
+    b.created_at.localeCompare(a.created_at),
+  );
 }
 
 export function demoUploadsForRange(range: DateRangeValue): DemoUploadRecord[] {
@@ -296,7 +322,9 @@ function average(values: number[]) {
 }
 
 function generatedDemoAutoKpisForRange(range: DateRangeValue) {
-  const weeks = DEMO_WEEKS.filter((week) => rangeOverlaps(week, addDays(week, 6), range.from, range.to));
+  const weeks = DEMO_WEEKS.filter((week) =>
+    rangeOverlaps(week, addDays(week, 6), range.from, range.to),
+  );
   const indices = weeks.map((week) => DEMO_WEEKS.indexOf(week)).filter((index) => index >= 0);
   return {
     review_to_final_edit: average(indices.map((index) => DEMO_SERIES.review_to_final_edit[index])),
@@ -313,7 +341,15 @@ function generatedDemoAutoKpisForRange(range: DateRangeValue) {
         review_tickets: totals.review_tickets + 9,
         final_edit_tickets: totals.final_edit_tickets + (99 - index * 3),
       }),
-      { tickets: 0, invoiced: 0, quality_issues: 0, voided: 0, active_tickets: 0, review_tickets: 0, final_edit_tickets: 0 },
+      {
+        tickets: 0,
+        invoiced: 0,
+        quality_issues: 0,
+        voided: 0,
+        active_tickets: 0,
+        review_tickets: 0,
+        final_edit_tickets: 0,
+      },
     ),
   };
 }
@@ -333,6 +369,27 @@ function localDemoAutoKpisForRange(range: DateRangeValue) {
       totals.invoiceQualityIssues += m.invoiceQualityIssues ?? 0;
       totals.invoiceCycleDaysTotal += m.invoiceCycleDaysTotal ?? 0;
       totals.invoiceCycleCount += m.invoiceCycleCount ?? 0;
+      const reviewValue =
+        m.reviewToFinalEdit ??
+        (m.tickets != null && m.tickets > 0 ? ((m.finalEdited ?? 0) / m.tickets) * 100 : null);
+      const qualityValue =
+        m.ticketQuality ??
+        (m.invoiced != null && m.invoiced > 0
+          ? ((m.invoiceQualityIssues ?? 0) / m.invoiced) * 100
+          : m.tickets != null && m.tickets > 0
+            ? ((m.ticketVoids ?? 0) / m.tickets) * 100
+            : null);
+      const invoiceCycleValue =
+        m.invoiceCycleTime ??
+        ((m.invoiceCycleCount ?? 0) > 0
+          ? (m.invoiceCycleDaysTotal ?? 0) / (m.invoiceCycleCount ?? 1)
+          : null);
+      if (reviewValue != null && Number.isFinite(reviewValue))
+        totals.reviewValues.push(reviewValue);
+      if (qualityValue != null && Number.isFinite(qualityValue))
+        totals.qualityValues.push(qualityValue);
+      if (invoiceCycleValue != null && Number.isFinite(invoiceCycleValue))
+        totals.invoiceCycleValues.push(invoiceCycleValue);
       totals.hasTickets = totals.hasTickets || m.tickets != null;
       totals.hasInvoiced = totals.hasInvoiced || m.invoiced != null;
       return totals;
@@ -348,24 +405,30 @@ function localDemoAutoKpisForRange(range: DateRangeValue) {
       invoiceQualityIssues: 0,
       invoiceCycleDaysTotal: 0,
       invoiceCycleCount: 0,
+      reviewValues: [] as number[],
+      qualityValues: [] as number[],
+      invoiceCycleValues: [] as number[],
       hasTickets: false,
       hasInvoiced: false,
     },
   );
 
   return {
-    review_to_final_edit: metrics.hasTickets && metrics.tickets > 0 ? (metrics.finalEdited / metrics.tickets) * 100 : null,
-    ticket_quality: metrics.hasInvoiced && metrics.invoiced > 0
-      ? (metrics.invoiceQualityIssues / metrics.invoiced) * 100
-      : metrics.hasTickets && metrics.tickets > 0
-        ? (metrics.ticketVoids / metrics.tickets) * 100
+    review_to_final_edit: average(metrics.reviewValues),
+    ticket_quality: average(metrics.qualityValues),
+    invoice_cycle_time: average(metrics.invoiceCycleValues),
+    dispatch_completion:
+      metrics.hasTickets && metrics.tickets > 0
+        ? ((metrics.tickets - metrics.ticketVoids) / metrics.tickets) * 100
         : null,
-    invoice_cycle_time: metrics.invoiceCycleCount > 0 ? metrics.invoiceCycleDaysTotal / metrics.invoiceCycleCount : null,
-    dispatch_completion: metrics.hasTickets && metrics.tickets > 0 ? ((metrics.tickets - metrics.ticketVoids) / metrics.tickets) * 100 : null,
     totals: {
       tickets: metrics.tickets,
       invoiced: metrics.invoiced,
-      quality_issues: metrics.hasInvoiced ? metrics.invoiceQualityIssues : metrics.ticketVoids,
+      quality_issues: metrics.hasInvoiced
+        ? metrics.invoiceQualityIssues
+        : metrics.qualityValues.length
+          ? metrics.invoiceQualityIssues + metrics.ticketVoids
+          : metrics.ticketVoids,
       voided: metrics.ticketVoids,
       active_tickets: metrics.activeTickets,
       review_tickets: metrics.reviewTickets,
@@ -387,11 +450,20 @@ export function demoAutoKpisForRange(range: DateRangeValue) {
     totals: {
       tickets: local.hasTickets ? local.totals.tickets : generated.totals.tickets,
       invoiced: local.hasInvoiced ? local.totals.invoiced : generated.totals.invoiced,
-      quality_issues: local.hasInvoiced || local.hasTickets ? local.totals.quality_issues : generated.totals.quality_issues,
+      quality_issues:
+        local.hasInvoiced || local.hasTickets
+          ? local.totals.quality_issues
+          : generated.totals.quality_issues,
       voided: local.hasTickets ? local.totals.voided : generated.totals.voided,
-      active_tickets: local.hasTickets ? local.totals.active_tickets : generated.totals.active_tickets,
-      review_tickets: local.hasTickets ? local.totals.review_tickets : generated.totals.review_tickets,
-      final_edit_tickets: local.hasTickets ? local.totals.final_edit_tickets : generated.totals.final_edit_tickets,
+      active_tickets: local.hasTickets
+        ? local.totals.active_tickets
+        : generated.totals.active_tickets,
+      review_tickets: local.hasTickets
+        ? local.totals.review_tickets
+        : generated.totals.review_tickets,
+      final_edit_tickets: local.hasTickets
+        ? local.totals.final_edit_tickets
+        : generated.totals.final_edit_tickets,
     },
   };
 }
@@ -408,7 +480,7 @@ export function demoKpiValuesWithLocal() {
         id: `${upload.id}-review`,
         kpi_key: "review_to_final_edit",
         week_start,
-        actual: ((m.finalEdited ?? 0) / m.tickets) * 100,
+        actual: m.reviewToFinalEdit ?? ((m.finalEdited ?? 0) / m.tickets) * 100,
         source: "demo-upload",
         entered_by: null,
         created_at,
@@ -428,7 +500,7 @@ export function demoKpiValuesWithLocal() {
         id: `${upload.id}-quality`,
         kpi_key: "ticket_quality",
         week_start,
-        actual: ((m.invoiceQualityIssues ?? 0) / m.invoiced) * 100,
+        actual: m.ticketQuality ?? ((m.invoiceQualityIssues ?? 0) / m.invoiced) * 100,
         source: "demo-upload",
         entered_by: null,
         created_at,
@@ -438,18 +510,23 @@ export function demoKpiValuesWithLocal() {
         id: `${upload.id}-quality`,
         kpi_key: "ticket_quality",
         week_start,
-        actual: ((m.ticketVoids ?? 0) / m.tickets) * 100,
+        actual: m.ticketQuality ?? ((m.ticketVoids ?? 0) / m.tickets) * 100,
         source: "demo-upload",
         entered_by: null,
         created_at,
       });
     }
-    if ((m.invoiceCycleCount ?? 0) > 0) {
+    const invoiceCycleActual =
+      m.invoiceCycleTime ??
+      ((m.invoiceCycleCount ?? 0) > 0
+        ? (m.invoiceCycleDaysTotal ?? 0) / (m.invoiceCycleCount ?? 1)
+        : null);
+    if (invoiceCycleActual != null) {
       rows.push({
         id: `${upload.id}-invoice-cycle`,
         kpi_key: "invoice_cycle_time",
         week_start,
-        actual: (m.invoiceCycleDaysTotal ?? 0) / (m.invoiceCycleCount ?? 1),
+        actual: invoiceCycleActual,
         source: "demo-upload",
         entered_by: null,
         created_at,
@@ -457,7 +534,9 @@ export function demoKpiValuesWithLocal() {
     }
     return rows;
   });
-  return [...demoKpiValues(), ...localValues].sort((a, b) => a.week_start.localeCompare(b.week_start));
+  return [...demoKpiValues(), ...localValues].sort((a, b) =>
+    a.week_start.localeCompare(b.week_start),
+  );
 }
 
 export function demoNotes(week: string) {
@@ -500,7 +579,13 @@ export function demoCustomers() {
 }
 
 export function demoOpenJobs(week = DEMO_CURRENT_WEEK) {
-  const statuses = ["Scheduled", "In Progress", "Customer Confirmed", "Awaiting Parts", "Ready for Billing"];
+  const statuses = [
+    "Scheduled",
+    "In Progress",
+    "Customer Confirmed",
+    "Awaiting Parts",
+    "Ready for Billing",
+  ];
   const technicians = ["A. Patel", "M. Rivera", "J. Brooks", "S. Chen", "T. Morgan"];
   return demoCustomers().flatMap((customer, customerIndex) =>
     Array.from({ length: customerIndex < 3 ? 5 : 4 }, (_, jobIndex) => ({
@@ -519,7 +604,10 @@ export function demoOpenJobs(week = DEMO_CURRENT_WEEK) {
       status: statuses[jobIndex % statuses.length],
       age_days: jobIndex + 2 + (customerIndex % 2),
       technician: technicians[(customerIndex + jobIndex) % technicians.length],
-      notes: jobIndex === 3 ? "Waiting on stocked part confirmation" : "On track for the weekly customer update",
+      notes:
+        jobIndex === 3
+          ? "Waiting on stocked part confirmation"
+          : "On track for the weekly customer update",
     })),
   );
 }

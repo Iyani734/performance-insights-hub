@@ -19,19 +19,20 @@ const METRICS: MetricDefinition[] = [
     cadence: "Weekly",
     target: ">= 95%",
     source: "Total Tickets uploads",
-    formula: "Tickets with Final Edited By or FinalEditedBy populated / all tickets x 100.",
-    columns: ["Final Edited By", "FinalEditedBy"],
-    note: "This is the available automation for the tracker goal. The exact day-prior review queue requires a Review Date or queue timestamp that is not in the current export.",
+    formula:
+      "Tickets in Final Edit status / all tickets x 100. If Date Final Edited exists, only rows final edited inside the selected range are counted.",
+    columns: ["Status", "Date Final Edited", "Final Edited By", "FinalEditedBy"],
+    note: "This follows the TCR process: count weekly tickets, then count tickets completed through Final Edit. If the export has no final-edit date, Status F/Final Edit is used; FinalEditedBy is only a fallback.",
   },
   {
     label: "Ticket Quality",
     owner: "Dispatch/Drivers",
     cadence: "Monthly",
     target: "< 3%",
-    source: "Total Invoiced uploads, or Total Tickets when no invoiced upload exists for the selected range",
-    formula: "Rows with a populated Void Reason / all rows in the quality source x 100.",
-    columns: ["Void Reason"],
-    note: "Lower is better. Void Reason is the quality-error flag; the calculator prefers Total Invoiced, then falls back to Total Tickets so the dispatch export can still populate this KPI.",
+    source: "Total Invoiced uploads plus the billing quality-issue tracker",
+    formula: "Quality issue count / total invoiced tickets x 100.",
+    columns: ["Void Reason", "Driver Error", "Quality Issue"],
+    note: "Lower is better. The ARC document says the quality-issue count is tracked by the Invoicing team. When an upload includes a quality flag such as Void Reason, the app counts populated values automatically; otherwise enter the issue rate manually.",
   },
   {
     label: "Quality Issues",
@@ -39,19 +40,20 @@ const METRICS: MetricDefinition[] = [
     cadence: "Monthly",
     target: "Supporting count",
     source: "Same source used for Ticket Quality",
-    formula: "Count rows where Void Reason is populated in the same source used for Ticket Quality.",
-    columns: ["Void Reason"],
-    note: "This is the numerator behind Ticket Quality and the Quality Issues dashboard count; it is not a separate tracker target.",
+    formula: "Count rows flagged as billing/ticket quality issues.",
+    columns: ["Void Reason", "Driver Error", "Quality Issue"],
+    note: "This is the numerator behind Ticket Quality and the Quality Issues dashboard count. The billing quality sheet remains the authoritative manual source when those columns are not in the upload.",
   },
   {
     label: "Invoice Cycle Time (Final Edit to Invoice)",
     owner: "Invoicing",
     cadence: "Weekly",
     target: "<= 3 days",
-    source: "Total Invoiced uploads; falls back to invoiced-status rows in Total Tickets when no invoiced upload exists",
-    formula: "Average of max(0, invoice date - final edit date), in calendar days.",
-    columns: ["Final Edit Date", "Invoice Date", "Date Recv", "Deliver/Pickup"],
-    note: "The calculator prefers explicit Final Edit and Invoice date columns. In the current ARC export, Date Recv is used as the final-edit handoff date and Deliver/Pickup is used as the invoice/completion date.",
+    source: "Total Tickets uploads filtered to Final Edit",
+    formula:
+      "Business days from the oldest Deliver/Pickup date in Final Edit to the selected Effective to date.",
+    columns: ["Status", "Deliver/Pickup"],
+    note: "This matches the TCR instructions: select Final Edit, sort by Deliver/Pickup, then count business days back to the oldest date. Example: Jun 10 to Jun 17 is 5 business days.",
   },
   {
     label: "Team Responsiveness (within 1 hour)",
@@ -99,7 +101,8 @@ const METRICS: MetricDefinition[] = [
     cadence: "Current view",
     target: "No target",
     source: "Total Tickets uploads",
-    formula: "Count ticket Status values matching Active, Review, and Final Edit; codes A, R, and F are also recognized.",
+    formula:
+      "Count ticket Status values matching Active, Review, and Final Edit; codes A, R, and F are also recognized.",
     columns: ["Status"],
     note: "This file uses coded statuses. F is counted as Final Edit, while Active and Review remain empty unless the upload includes A/Active or R/Review rows.",
   },
@@ -115,7 +118,9 @@ export function MetricCalculationGuide() {
             <span className="text-sm font-medium">Calculation definitions</span>
           </div>
           <p className="mt-2 text-sm text-muted-foreground">
-            These definitions align the dashboard to the Performance Tracker. Automatic calculations use the selected dashboard date range and the report type chosen during upload; each manual KPI names the source fields still required for automation.
+            These definitions align the dashboard to the Performance Tracker. Automatic calculations
+            use the selected dashboard date range and the report type chosen during upload; each
+            manual KPI names the source fields still required for automation.
           </p>
         </div>
         <div className="border-l-0 md:border-l md:pl-4">
@@ -124,7 +129,8 @@ export function MetricCalculationGuide() {
             <span className="text-sm font-medium">Upload rule</span>
           </div>
           <p className="mt-2 text-sm text-muted-foreground">
-            A file name does not determine the calculation. Choose Total Tickets or Total Invoiced before uploading so its rows are stored in the correct calculation group.
+            A file name does not determine the calculation. Choose Total Tickets or Total Invoiced
+            before uploading so its rows are stored in the correct calculation group.
           </p>
         </div>
       </section>
@@ -135,21 +141,33 @@ export function MetricCalculationGuide() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="font-display text-lg font-semibold">{metric.label}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">{metric.owner} · {metric.cadence} · Target {metric.target}</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {metric.owner} · {metric.cadence} · Target {metric.target}
+                </p>
                 <p className="mt-1 text-sm text-muted-foreground">{metric.source}</p>
               </div>
               <PencilLine className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
             </div>
             <div className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
               <div>
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Calculation</div>
-                <code className="mt-1 block whitespace-normal rounded-md bg-muted px-3 py-2 text-xs text-foreground">{metric.formula}</code>
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Calculation
+                </div>
+                <code className="mt-1 block whitespace-normal rounded-md bg-muted px-3 py-2 text-xs text-foreground">
+                  {metric.formula}
+                </code>
               </div>
               <div>
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Columns used</div>
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Columns used
+                </div>
                 {metric.columns.length ? (
                   <div className="mt-1 flex flex-wrap gap-1.5">
-                    {metric.columns.map((column) => <code key={column} className="rounded bg-muted px-2 py-1 text-xs">{column}</code>)}
+                    {metric.columns.map((column) => (
+                      <code key={column} className="rounded bg-muted px-2 py-1 text-xs">
+                        {column}
+                      </code>
+                    ))}
                   </div>
                 ) : (
                   <p className="mt-1 text-sm text-muted-foreground">No upload column</p>

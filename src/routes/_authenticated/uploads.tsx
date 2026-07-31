@@ -7,15 +7,46 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { UploadCloud, FileSpreadsheet, Trash2, CheckCircle2, AlertTriangle, Download, Check, X, ShieldAlert, User as UserIcon } from "lucide-react";
+import {
+  UploadCloud,
+  FileSpreadsheet,
+  Trash2,
+  CheckCircle2,
+  AlertTriangle,
+  Download,
+  Check,
+  X,
+  ShieldAlert,
+  User as UserIcon,
+} from "lucide-react";
 import { formatWeek } from "@/lib/kpi";
 import { readWorkbook, parseTicketsSheet, parseOpenJobsSheet } from "@/lib/parse";
 import { useAuth } from "@/lib/useAuth";
 import { useDemoMode } from "@/lib/demoMode";
 import { isSeededDemoUpload } from "@/lib/liveData";
+import {
+  calculateInvoiceCycleTime,
+  calculateReviewToFinalEdit,
+  calculateTicketQuality,
+  hasValue,
+  isFinalEditTicket,
+  normalizeTicketStatus,
+} from "@/lib/kpiRules";
 import {
   defaultLast7DaysRange,
   demoUploads,
@@ -40,82 +71,6 @@ function isExcelFile(file: File) {
   return /\.(xlsx|xls)$/i.test(file.name);
 }
 
-function normalizeTicketStatus(status: unknown) {
-  const value = String(status ?? "").trim().toLowerCase();
-  const compact = value.replace(/[\s_-]+/g, "");
-
-  if (compact === "a" || compact === "active") return "active";
-  if (compact === "r" || compact === "review") return "review";
-  if (compact === "f" || compact === "finaledit" || compact === "finaledited") return "final edit";
-  if (compact === "i" || compact === "invoiced" || compact === "invoice") return "invoiced";
-  if (compact === "v" || compact === "void" || compact === "voided") return "voided";
-
-  return value;
-}
-
-const FINAL_EDIT_DATE_KEYS = [
-  "Final Edit Date",
-  "Final Edited Date",
-  "Final Edit Time",
-  "Final Edited At",
-  "Final Edit Timestamp",
-  "Date Final Edited",
-  "Date Final Edit",
-  "Date Recv",
-];
-
-const INVOICE_DATE_KEYS = [
-  "Invoice Date",
-  "Invoiced Date",
-  "Date Invoiced",
-  "Invoice Created",
-  "Invoice Timestamp",
-  "Billed Date",
-  "Billing Date",
-  "Deliver/Pickup",
-];
-
-function normalizeHeader(value: string) {
-  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
-
-function toDate(value: unknown): Date | null {
-  if (value == null || value === "") return null;
-  if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
-  if (typeof value === "number") {
-    const date = new Date(Math.round((value - 25569) * 86400 * 1000));
-    return Number.isNaN(date.getTime()) ? null : date;
-  }
-  const text = String(value).trim();
-  if (!text) return null;
-  const date = new Date(text);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function dateFromRaw(raw: unknown, keys: string[]): Date | null {
-  if (!raw || typeof raw !== "object") return null;
-  const record = raw as Record<string, unknown>;
-  for (const key of keys) {
-    const exact = toDate(record[key]);
-    if (exact) return exact;
-  }
-
-  const normalized = new Map(Object.keys(record).map((key) => [normalizeHeader(key), key]));
-  for (const key of keys) {
-    const actual = normalized.get(normalizeHeader(key));
-    const value = actual ? toDate(record[actual]) : null;
-    if (value) return value;
-  }
-  return null;
-}
-
-function invoiceCycleDays(row: any): number | null {
-  const finalEditDate = dateFromRaw(row.raw, FINAL_EDIT_DATE_KEYS) ?? toDate(row.date_recv);
-  const invoiceDate = dateFromRaw(row.raw, INVOICE_DATE_KEYS);
-  if (!finalEditDate || !invoiceDate) return null;
-  return Math.max(0, (invoiceDate.getTime() - finalEditDate.getTime()) / 86400000);
-}
-
 async function insertBatches<T>(rows: T[], insert: (batch: T[]) => Promise<void>) {
   const batches = chunk(rows, 500);
   let nextBatch = 0;
@@ -128,34 +83,40 @@ async function insertBatches<T>(rows: T[], insert: (batch: T[]) => Promise<void>
   await Promise.all(workers);
 }
 
-function buildDemoUploadMetrics(kind: DemoUploadKind, rows: any[]): DemoUploadMetrics | undefined {
+function buildDemoUploadMetrics(
+  kind: DemoUploadKind,
+  rows: any[],
+  effectiveFrom: string,
+  effectiveTo: string,
+): DemoUploadMetrics | undefined {
   if (kind === "open_jobs") return undefined;
-  const completedRows = rows.filter((row) => !row.void_reason || String(row.void_reason).trim() === "");
+  const completedRows = rows.filter(
+    (row) => !row.void_reason || String(row.void_reason).trim() === "",
+  );
   if (kind === "total_tickets") {
     const statusRows = rows.map((row) => normalizeTicketStatus(row.status));
-    const cycleDays = rows
-      .filter((row) => normalizeTicketStatus(row.status) === "invoiced")
-      .map((row) => invoiceCycleDays(row))
-      .filter((days): days is number => days != null && Number.isFinite(days));
+    const quality = calculateTicketQuality([], rows);
     return {
       tickets: rows.length,
-      finalEdited: rows.filter((row) => row.final_edited_by).length,
+      finalEdited: rows.some((row) => isFinalEditTicket(row))
+        ? rows.filter((row) => isFinalEditTicket(row)).length
+        : rows.filter((row) => hasValue(row.final_edited_by)).length,
       ticketVoids: rows.length - completedRows.length,
       activeTickets: statusRows.filter((status) => status === "active").length,
       reviewTickets: statusRows.filter((status) => status === "review").length,
       finalEditTickets: statusRows.filter((status) => status === "final edit").length,
-      invoiceCycleDaysTotal: cycleDays.reduce((sum, days) => sum + days, 0),
-      invoiceCycleCount: cycleDays.length,
+      reviewToFinalEdit: calculateReviewToFinalEdit(rows, effectiveFrom, effectiveTo),
+      ticketQuality: quality.actual,
+      qualityIssues: quality.issues,
+      invoiceCycleTime: calculateInvoiceCycleTime(rows, effectiveTo),
     };
   }
-  const cycleDays = rows
-    .map((row) => invoiceCycleDays(row))
-    .filter((days): days is number => days != null && Number.isFinite(days));
+  const quality = calculateTicketQuality(rows, []);
   return {
     invoiced: rows.length,
-    invoiceQualityIssues: rows.filter((row) => row.void_reason && String(row.void_reason).trim() !== "").length,
-    invoiceCycleDaysTotal: cycleDays.reduce((sum, days) => sum + days, 0),
-    invoiceCycleCount: cycleDays.length,
+    invoiceQualityIssues: quality.issues,
+    ticketQuality: quality.actual,
+    qualityIssues: quality.issues,
   };
 }
 
@@ -170,7 +131,8 @@ function UploadsPage() {
   const [effectiveTo, setEffectiveTo] = useState<string>(defaultRange.to);
   const [file, setFile] = useState<File | null>(null);
   const [fileInputKey, setFileInputKey] = useState(0);
-  const [demoUploadedRows, setDemoUploadedRows] = useState<DemoUploadRecord[]>(loadDemoLocalUploads);
+  const [demoUploadedRows, setDemoUploadedRows] =
+    useState<DemoUploadRecord[]>(loadDemoLocalUploads);
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
   const [uploadStage, setUploadStage] = useState("");
@@ -180,24 +142,38 @@ function UploadsPage() {
     queryKey: ["uploads"],
     enabled: !demoMode,
     queryFn: async () => {
-      const { data } = await supabase.from("report_uploads").select("*").order("created_at", { ascending: false }).limit(50);
+      const { data } = await supabase
+        .from("report_uploads")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(50);
       return (data ?? []).filter((row) => !isSeededDemoUpload(row.file_name));
     },
   });
 
   const profilesQ = useQuery({
     queryKey: ["profiles_all", demoMode],
-    queryFn: async () => demoMode ? [] : (await supabase.from("profiles").select("id,full_name,email")).data ?? [],
+    queryFn: async () =>
+      demoMode ? [] : ((await supabase.from("profiles").select("id,full_name,email")).data ?? []),
   });
 
   const requestsQ = useQuery({
     queryKey: ["delete_requests", demoMode],
-    queryFn: async () => demoMode ? [] : (await supabase.from("upload_delete_requests").select("*").order("created_at", { ascending: false })).data ?? [],
+    queryFn: async () =>
+      demoMode
+        ? []
+        : ((
+            await supabase
+              .from("upload_delete_requests")
+              .select("*")
+              .order("created_at", { ascending: false })
+          ).data ?? []),
   });
 
   const profileMap = useMemo(() => {
     const m = new Map<string, { name: string; email: string }>();
-    for (const p of (profilesQ.data ?? []) as any[]) m.set(p.id, { name: p.full_name ?? p.email ?? "Unknown", email: p.email ?? "" });
+    for (const p of (profilesQ.data ?? []) as any[])
+      m.set(p.id, { name: p.full_name ?? p.email ?? "Unknown", email: p.email ?? "" });
     return m;
   }, [profilesQ.data]);
 
@@ -210,7 +186,7 @@ function UploadsPage() {
   }, [requestsQ.data]);
 
   const uploads = useMemo(
-    () => demoMode ? [...demoUploadedRows, ...demoUploads()] : (uploadsQ.data ?? []),
+    () => (demoMode ? [...demoUploadedRows, ...demoUploads()] : (uploadsQ.data ?? [])),
     [demoMode, demoUploadedRows, uploadsQ.data],
   );
 
@@ -244,14 +220,16 @@ function UploadsPage() {
             processing_ms: dt,
             error_details: parsed.stats.error_details,
             status: parsed.stats.errors > 0 ? "partial" : "success",
-            metrics: buildDemoUploadMetrics(kind, parsed.rows),
+            metrics: buildDemoUploadMetrics(kind, parsed.rows, effectiveFrom, effectiveTo),
           } satisfies DemoUploadRecord,
         };
       }
       if (!user) throw new Error("Sign in to upload files.");
       const filePath = `${uploadBucket}/${Date.now()}-${selectedFile.name}`;
       setUploadStage("Uploading file and creating report...");
-      const storageUpload = supabase.storage.from("report-files").upload(filePath, selectedFile, { upsert: false });
+      const storageUpload = supabase.storage
+        .from("report-files")
+        .upload(filePath, selectedFile, { upsert: false });
       let parsed;
       try {
         const wb = await workbookPromise;
@@ -263,10 +241,23 @@ function UploadsPage() {
         throw error;
       }
       const { error: storageError } = await storageUpload;
-      if (storageError) throw new Error(`Could not store the original file: ${storageError.message}`);
-      const { data: up, error: reportError } = await supabase.from("report_uploads")
-        .insert({ kind, week_start: uploadBucket, file_name: selectedFile.name, uploaded_by: user.id, row_count: 0, status: "processing", file_path: filePath, effective_from: effectiveFrom, effective_to: effectiveTo } as any)
-        .select().single();
+      if (storageError)
+        throw new Error(`Could not store the original file: ${storageError.message}`);
+      const { data: up, error: reportError } = await supabase
+        .from("report_uploads")
+        .insert({
+          kind,
+          week_start: uploadBucket,
+          file_name: selectedFile.name,
+          uploaded_by: user.id,
+          row_count: 0,
+          status: "processing",
+          file_path: filePath,
+          effective_from: effectiveFrom,
+          effective_to: effectiveTo,
+        } as any)
+        .select()
+        .single();
       if (reportError || !up) {
         await supabase.storage.from("report-files").remove([filePath]);
         throw reportError ?? new Error("Could not create the upload record.");
@@ -275,7 +266,11 @@ function UploadsPage() {
       try {
         if (kind === "open_jobs") {
           stats = parsed.stats;
-          const payload = parsed.rows.map(r => ({ ...r, upload_id: up.id, week_start: uploadBucket }));
+          const payload = parsed.rows.map((r) => ({
+            ...r,
+            upload_id: up.id,
+            week_start: uploadBucket,
+          }));
           setUploadStage(`Importing ${payload.length} rows...`);
           await insertBatches(payload, async (batch) => {
             const { error } = await supabase.from("open_jobs").insert(batch as any);
@@ -284,7 +279,13 @@ function UploadsPage() {
         } else {
           stats = parsed.stats;
           const tKind = kind === "total_tickets" ? "tickets" : "invoiced";
-          const payload = parsed.rows.map(r => ({ ...r, upload_id: up.id, week_start: uploadBucket, kind: tKind, raw: r.raw }));
+          const payload = parsed.rows.map((r) => ({
+            ...r,
+            upload_id: up.id,
+            week_start: uploadBucket,
+            kind: tKind,
+            raw: r.raw,
+          }));
           setUploadStage(`Importing ${payload.length} rows...`);
           await insertBatches(payload, async (batch) => {
             const { error } = await supabase.from("tickets").insert(batch as any);
@@ -297,41 +298,62 @@ function UploadsPage() {
             { kpi_key: "review_to_final_edit", actual: auto.review_to_final_edit },
             { kpi_key: "ticket_quality", actual: auto.ticket_quality },
             { kpi_key: "invoice_cycle_time", actual: auto.invoice_cycle_time },
-          ].filter(v => v.actual != null).map(v => ({ ...v, week_start: uploadBucket, source: "auto", entered_by: user.id }));
+          ]
+            .filter((v) => v.actual != null)
+            .map((v) => ({ ...v, week_start: uploadBucket, source: "auto", entered_by: user.id }));
           const kpiWrite = upserts.length
-            ? Promise.resolve(supabase.from("kpi_values").upsert(upserts, { onConflict: "kpi_key,week_start" }))
+            ? Promise.resolve(
+                supabase.from("kpi_values").upsert(upserts, { onConflict: "kpi_key,week_start" }),
+              )
             : Promise.resolve({ error: null });
           const dt = Math.round(performance.now() - t0);
-          const reportWrite = supabase.from("report_uploads").update({
-            row_count: stats.imported, rows_skipped: stats.skipped, errors_count: stats.errors,
-            processing_ms: dt, error_details: stats.error_details as any,
-            status: stats.errors > 0 ? "partial" : "success",
-          }).eq("id", up.id);
+          const reportWrite = supabase
+            .from("report_uploads")
+            .update({
+              row_count: stats.imported,
+              rows_skipped: stats.skipped,
+              errors_count: stats.errors,
+              processing_ms: dt,
+              error_details: stats.error_details as any,
+              status: stats.errors > 0 ? "partial" : "success",
+            })
+            .eq("id", up.id);
           const [kpiResult, reportResult] = await Promise.all([kpiWrite, reportWrite]);
           if (kpiResult.error) throw kpiResult.error;
           if (reportResult.error) throw reportResult.error;
           return { stats };
         }
         const dt = Math.round(performance.now() - t0);
-        const reportWrite = supabase.from("report_uploads").update({
-          row_count: stats.imported, rows_skipped: stats.skipped, errors_count: stats.errors,
-          processing_ms: dt, error_details: stats.error_details as any,
-          status: stats.errors > 0 ? "partial" : "success",
-        }).eq("id", up.id);
+        const reportWrite = supabase
+          .from("report_uploads")
+          .update({
+            row_count: stats.imported,
+            rows_skipped: stats.skipped,
+            errors_count: stats.errors,
+            processing_ms: dt,
+            error_details: stats.error_details as any,
+            status: stats.errors > 0 ? "partial" : "success",
+          })
+          .eq("id", up.id);
         const { error: reportUpdateError } = await reportWrite;
         if (reportUpdateError) throw reportUpdateError;
         return { stats };
       } catch (error: any) {
         const reason = error?.message ?? "Upload processing failed";
         const details = [...(stats?.error_details ?? []), { row: 0, reason }];
-        const { error: failedStatusError } = await supabase.from("report_uploads").update({
-          status: "failed",
-          errors_count: Math.max(1, stats?.errors ?? 0),
-          error_details: details,
-          processing_ms: Math.round(performance.now() - t0),
-        }).eq("id", up.id);
+        const { error: failedStatusError } = await supabase
+          .from("report_uploads")
+          .update({
+            status: "failed",
+            errors_count: Math.max(1, stats?.errors ?? 0),
+            error_details: details,
+            processing_ms: Math.round(performance.now() - t0),
+          })
+          .eq("id", up.id);
         if (failedStatusError) {
-          throw new Error(`${reason}. The upload could not be marked as failed: ${failedStatusError.message}`);
+          throw new Error(
+            `${reason}. The upload could not be marked as failed: ${failedStatusError.message}`,
+          );
         }
         throw error;
       }
@@ -344,19 +366,24 @@ function UploadsPage() {
           return next;
         });
       }
-      const workbookRows = s.sheet_rows && s.sheet_rows !== s.imported
-        ? ` (${s.sheet_rows} Excel rows including header)`
-        : "";
-      const rowSummary = s.source_rows === s.imported
-        ? `${s.imported} data rows imported${workbookRows}`
-        : `${s.source_rows} data rows found; ${s.imported} imported${s.skipped ? `, ${s.skipped} skipped` : ""}${s.errors ? `, ${s.errors} errors` : ""}${workbookRows}`;
+      const workbookRows =
+        s.sheet_rows && s.sheet_rows !== s.imported
+          ? ` (${s.sheet_rows} Excel rows including header)`
+          : "";
+      const rowSummary =
+        s.source_rows === s.imported
+          ? `${s.imported} data rows imported${workbookRows}`
+          : `${s.source_rows} data rows found; ${s.imported} imported${s.skipped ? `, ${s.skipped} skipped` : ""}${s.errors ? `, ${s.errors} errors` : ""}${workbookRows}`;
       toast.success(rowSummary);
       setUploadStage("");
       setFile(null);
       setFileInputKey((v) => v + 1);
       qc.invalidateQueries();
     },
-    onError: (e: any) => { setUploadStage(""); toast.error(e.message ?? "Upload failed"); },
+    onError: (e: any) => {
+      setUploadStage("");
+      toast.error(e.message ?? "Upload failed");
+    },
   });
 
   // Non-admin: request deletion; Admin: delete immediately
@@ -364,13 +391,19 @@ function UploadsPage() {
     mutationFn: async () => {
       if (!deleteTarget || !user) return;
       const { error } = await supabase.from("upload_delete_requests").insert({
-        upload_id: deleteTarget.id, requested_by: user.id,
+        upload_id: deleteTarget.id,
+        requested_by: user.id,
         requested_by_name: profileMap.get(user.id)?.name ?? user.email,
         reason: deleteReason.trim() || null,
       });
       if (error) throw error;
     },
-    onSuccess: () => { toast.success("Deletion requested — awaiting admin approval"); setDeleteTarget(null); setDeleteReason(""); qc.invalidateQueries({ queryKey: ["delete_requests"] }); },
+    onSuccess: () => {
+      toast.success("Deletion requested — awaiting admin approval");
+      setDeleteTarget(null);
+      setDeleteReason("");
+      qc.invalidateQueries({ queryKey: ["delete_requests"] });
+    },
     onError: (e: any) => toast.error(e.message),
   });
 
@@ -379,30 +412,51 @@ function UploadsPage() {
       const { error } = await supabase.from("report_uploads").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { toast.success("Upload deleted"); qc.invalidateQueries(); },
+    onSuccess: () => {
+      toast.success("Upload deleted");
+      qc.invalidateQueries();
+    },
     onError: (e: any) => toast.error(e.message),
   });
 
   const resolveReq = useMutation({
     mutationFn: async ({ req, approve }: { req: any; approve: boolean }) => {
       if (approve) {
-        const { error: dErr } = await supabase.from("report_uploads").delete().eq("id", req.upload_id);
+        const { error: dErr } = await supabase
+          .from("report_uploads")
+          .delete()
+          .eq("id", req.upload_id);
         if (dErr) throw dErr;
       }
-      const { error } = await supabase.from("upload_delete_requests").update({
-        status: approve ? "approved" : "rejected",
-        resolved_by: user?.id ?? null, resolved_at: new Date().toISOString(),
-      }).eq("id", req.id);
+      const { error } = await supabase
+        .from("upload_delete_requests")
+        .update({
+          status: approve ? "approved" : "rejected",
+          resolved_by: user?.id ?? null,
+          resolved_at: new Date().toISOString(),
+        })
+        .eq("id", req.id);
       if (error) throw error;
     },
-    onSuccess: (_d, v) => { toast.success(v.approve ? "Approved & deleted" : "Rejected"); qc.invalidateQueries(); },
+    onSuccess: (_d, v) => {
+      toast.success(v.approve ? "Approved & deleted" : "Rejected");
+      qc.invalidateQueries();
+    },
     onError: (e: any) => toast.error(e.message),
   });
 
   async function downloadFile(u: any) {
-    if (!u.file_path) { toast.error("Original file not stored"); return; }
-    const { data, error } = await supabase.storage.from("report-files").createSignedUrl(u.file_path, 60);
-    if (error) { toast.error(error.message); return; }
+    if (!u.file_path) {
+      toast.error("Original file not stored");
+      return;
+    }
+    const { data, error } = await supabase.storage
+      .from("report-files")
+      .createSignedUrl(u.file_path, 60);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
     window.open(data.signedUrl, "_blank");
   }
 
@@ -421,42 +475,70 @@ function UploadsPage() {
     <div className="space-y-6 animate-in fade-in duration-300">
       <header>
         <h1 className="font-display text-3xl font-semibold">Report Uploads</h1>
-        <p className="text-sm text-muted-foreground mt-1">Upload Total Tickets, Total Invoiced, or Open Jobs exports.</p>
+        <p className="text-sm text-muted-foreground mt-1">
+          Upload Total Tickets, Total Invoiced, or Open Jobs exports.
+        </p>
       </header>
-
 
       <Card className="p-6">
         <div className="grid md:grid-cols-3 gap-4">
           <div className="space-y-2">
             <Label>Report type</Label>
             <Select value={kind} onValueChange={(v: any) => setKind(v)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>{KINDS.map(k => <SelectItem key={k.value} value={k.value}>{k.label}</SelectItem>)}</SelectContent>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {KINDS.map((k) => (
+                  <SelectItem key={k.value} value={k.value}>
+                    {k.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
             </Select>
           </div>
           <div className="space-y-2">
             <Label>Effective from</Label>
-            <Input type="date" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} />
+            <Input
+              type="date"
+              value={effectiveFrom}
+              onChange={(e) => setEffectiveFrom(e.target.value)}
+            />
           </div>
           <div className="space-y-2">
             <Label>Effective to</Label>
-            <Input type="date" value={effectiveTo} onChange={(e) => setEffectiveTo(e.target.value)} />
+            <Input
+              type="date"
+              value={effectiveTo}
+              onChange={(e) => setEffectiveTo(e.target.value)}
+            />
           </div>
           <div className="space-y-2 md:col-span-3">
             <Label>File (.xlsx / .xls)</Label>
-            <Input key={fileInputKey} type="file" accept=".xlsx,.xls" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            <Input
+              key={fileInputKey}
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
             <p className="text-xs text-muted-foreground">
-              Pick the date range this file's data actually covers. The header row is not counted as imported data.
+              Pick the date range this file's data actually covers. The header row is not counted as
+              imported data.
             </p>
             {fileError && <p className="text-xs text-destructive">{fileError}</p>}
           </div>
         </div>
         <div className="mt-6 flex items-center gap-3">
           <Button onClick={() => upload.mutate(file)} disabled={uploadDisabled}>
-            <UploadCloud className="w-4 h-4 mr-2" />{upload.isPending ? "Processing…" : demoMode ? "Process Demo File" : "Upload & Process"}
+            <UploadCloud className="w-4 h-4 mr-2" />
+            {upload.isPending ? "Processing…" : demoMode ? "Process Demo File" : "Upload & Process"}
           </Button>
           {file && <span className="text-sm text-muted-foreground">{file.name}</span>}
-          {upload.isPending && <span className="text-sm text-muted-foreground">{uploadStage || "Starting upload..."}</span>}
+          {upload.isPending && (
+            <span className="text-sm text-muted-foreground">
+              {uploadStage || "Starting upload..."}
+            </span>
+          )}
         </div>
       </Card>
 
@@ -464,27 +546,51 @@ function UploadsPage() {
         <Card className="p-6 border-warning/40 bg-warning/5">
           <h2 className="font-display text-lg font-semibold mb-3 flex items-center gap-2">
             <ShieldAlert className="w-4 h-4 text-warning" />
-            Pending deletion requests <span className="text-xs font-normal text-muted-foreground">({pendingCount})</span>
+            Pending deletion requests{" "}
+            <span className="text-xs font-normal text-muted-foreground">({pendingCount})</span>
           </h2>
           <div className="space-y-2">
-            {(requestsQ.data ?? []).filter((r: any) => r.status === "pending").map((r: any) => {
-              const u = uploads.find((x: any) => x.id === r.upload_id);
-              return (
-                <div key={r.id} className="flex flex-wrap items-center gap-3 p-3 rounded-md bg-card border">
-                  <FileSpreadsheet className="w-4 h-4 text-primary shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium truncate">{u?.file_name ?? "Deleted file"}</div>
-                    <div className="text-xs text-muted-foreground">Requested by <b>{r.requested_by_name ?? "Unknown"}</b> · {new Date(r.created_at).toLocaleString()}{r.reason ? ` · "${r.reason}"` : ""}</div>
+            {(requestsQ.data ?? [])
+              .filter((r: any) => r.status === "pending")
+              .map((r: any) => {
+                const u = uploads.find((x: any) => x.id === r.upload_id);
+                return (
+                  <div
+                    key={r.id}
+                    className="flex flex-wrap items-center gap-3 p-3 rounded-md bg-card border"
+                  >
+                    <FileSpreadsheet className="w-4 h-4 text-primary shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate">
+                        {u?.file_name ?? "Deleted file"}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Requested by <b>{r.requested_by_name ?? "Unknown"}</b> ·{" "}
+                        {new Date(r.created_at).toLocaleString()}
+                        {r.reason ? ` · "${r.reason}"` : ""}
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => resolveReq.mutate({ req: r, approve: false })}
+                      disabled={resolveReq.isPending}
+                    >
+                      <X className="w-3.5 h-3.5 mr-1" />
+                      Reject
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => resolveReq.mutate({ req: r, approve: true })}
+                      disabled={resolveReq.isPending}
+                    >
+                      <Check className="w-3.5 h-3.5 mr-1" />
+                      Approve & delete
+                    </Button>
                   </div>
-                  <Button size="sm" variant="outline" onClick={() => resolveReq.mutate({ req: r, approve: false })} disabled={resolveReq.isPending}>
-                    <X className="w-3.5 h-3.5 mr-1" />Reject
-                  </Button>
-                  <Button size="sm" variant="destructive" onClick={() => resolveReq.mutate({ req: r, approve: true })} disabled={resolveReq.isPending}>
-                    <Check className="w-3.5 h-3.5 mr-1" />Approve & delete
-                  </Button>
-                </div>
-              );
-            })}
+                );
+              })}
           </div>
         </Card>
       )}
@@ -512,15 +618,23 @@ function UploadsPage() {
             <tbody>
               {uploads.map((u: any, index: number) => {
                 const uploader = u.uploaded_by ? profileMap.get(u.uploaded_by) : null;
-                const uploaderName = uploader?.name ?? (u.file_name?.startsWith("demo-") ? DEMO_UPLOADERS[index % DEMO_UPLOADERS.length] : "Unknown");
+                const uploaderName =
+                  uploader?.name ??
+                  (u.file_name?.startsWith("demo-")
+                    ? DEMO_UPLOADERS[index % DEMO_UPLOADERS.length]
+                    : "Unknown");
                 const pending = pendingByUpload.get(u.id);
                 const isMine = user?.id === u.uploaded_by;
-                const uploadStatus = u.status === "processing" && Date.now() - new Date(u.created_at).getTime() > 5 * 60 * 1000
-                  ? "failed"
-                  : u.status;
+                const uploadStatus =
+                  u.status === "processing" &&
+                  Date.now() - new Date(u.created_at).getTime() > 5 * 60 * 1000
+                    ? "failed"
+                    : u.status;
                 return (
                   <tr key={u.id} className="border-t hover:bg-muted/30">
-                    <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{new Date(u.created_at).toLocaleString()}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
+                      {new Date(u.created_at).toLocaleString()}
+                    </td>
                     <td className="px-4 py-2.5 whitespace-nowrap">
                       <span className="inline-flex items-center gap-1.5">
                         <span className="w-6 h-6 rounded-full bg-primary/15 text-primary flex items-center justify-center text-[10px] font-semibold">
@@ -529,27 +643,81 @@ function UploadsPage() {
                         <span className="font-medium">{uploaderName}</span>
                       </span>
                     </td>
-                    <td className="px-4 py-2.5"><span className="inline-flex items-center gap-1.5"><FileSpreadsheet className="w-4 h-4 text-primary" />{KINDS.find(k => k.value === u.kind)?.label ?? u.kind}</span></td>
-                    <td className="px-4 py-2.5 whitespace-nowrap">{formatWeek(u.week_start)}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground max-w-[220px] truncate">{u.file_name}</td>
-                    <td className="px-4 py-2.5 text-right font-medium">{u.row_count ?? 0}</td>
-                    <td className={`px-4 py-2.5 text-right ${(u.errors_count ?? 0) > 0 ? "text-destructive font-medium" : "text-muted-foreground"}`}>{u.errors_count ?? 0}</td>
                     <td className="px-4 py-2.5">
-                      {uploadStatus === "success" && <span className="inline-flex items-center gap-1 text-success text-xs font-medium"><CheckCircle2 className="w-3.5 h-3.5" />Success</span>}
-                      {uploadStatus === "partial" && <span className="inline-flex items-center gap-1 text-warning text-xs font-medium"><AlertTriangle className="w-3.5 h-3.5" />Partial</span>}
-                      {uploadStatus === "failed" && <span className="inline-flex items-center gap-1 text-destructive text-xs font-medium"><AlertTriangle className="w-3.5 h-3.5" />Failed</span>}
-                      {uploadStatus === "processing" && <span className="text-muted-foreground text-xs">Processing…</span>}
+                      <span className="inline-flex items-center gap-1.5">
+                        <FileSpreadsheet className="w-4 h-4 text-primary" />
+                        {KINDS.find((k) => k.value === u.kind)?.label ?? u.kind}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">{formatWeek(u.week_start)}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground max-w-[220px] truncate">
+                      {u.file_name}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-medium">{u.row_count ?? 0}</td>
+                    <td
+                      className={`px-4 py-2.5 text-right ${(u.errors_count ?? 0) > 0 ? "text-destructive font-medium" : "text-muted-foreground"}`}
+                    >
+                      {u.errors_count ?? 0}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {uploadStatus === "success" && (
+                        <span className="inline-flex items-center gap-1 text-success text-xs font-medium">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          Success
+                        </span>
+                      )}
+                      {uploadStatus === "partial" && (
+                        <span className="inline-flex items-center gap-1 text-warning text-xs font-medium">
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          Partial
+                        </span>
+                      )}
+                      {uploadStatus === "failed" && (
+                        <span className="inline-flex items-center gap-1 text-destructive text-xs font-medium">
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          Failed
+                        </span>
+                      )}
+                      {uploadStatus === "processing" && (
+                        <span className="text-muted-foreground text-xs">Processing…</span>
+                      )}
                     </td>
                     <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                      {u.file_path && <Button size="sm" variant="ghost" onClick={() => downloadFile(u)} title="Download"><Download className="w-4 h-4" /></Button>}
+                      {u.file_path && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => downloadFile(u)}
+                          title="Download"
+                        >
+                          <Download className="w-4 h-4" />
+                        </Button>
+                      )}
                       {pending ? (
-                        <span className="text-xs text-warning font-medium ml-1">Deletion pending</span>
+                        <span className="text-xs text-warning font-medium ml-1">
+                          Deletion pending
+                        </span>
                       ) : isAdmin ? (
-                        <Button size="sm" variant="ghost" onClick={() => confirm("Delete this upload and its data?") && adminDelete.mutate(u.id)} title="Delete (admin)">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() =>
+                            confirm("Delete this upload and its data?") && adminDelete.mutate(u.id)
+                          }
+                          title="Delete (admin)"
+                        >
                           <Trash2 className="w-4 h-4 text-destructive" />
                         </Button>
                       ) : isMine ? (
-                        <Button size="sm" variant="ghost" onClick={() => { setDeleteTarget(u); setDeleteReason(""); }} title="Request deletion">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setDeleteTarget(u);
+                            setDeleteReason("");
+                          }}
+                          title="Request deletion"
+                        >
                           <Trash2 className="w-4 h-4 text-muted-foreground" />
                         </Button>
                       ) : null}
@@ -558,27 +726,50 @@ function UploadsPage() {
                 );
               })}
               {uploads.length === 0 && (
-                <tr><td colSpan={9} className="text-center py-8 text-sm text-muted-foreground">No uploads yet.</td></tr>
+                <tr>
+                  <td colSpan={9} className="text-center py-8 text-sm text-muted-foreground">
+                    No uploads yet.
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
         </div>
       </Card>
 
-      <Dialog open={!!deleteTarget} onOpenChange={(o) => { if (!o) { setDeleteTarget(null); setDeleteReason(""); } }}>
+      <Dialog
+        open={!!deleteTarget}
+        onOpenChange={(o) => {
+          if (!o) {
+            setDeleteTarget(null);
+            setDeleteReason("");
+          }
+        }}
+      >
         <DialogContent>
-          <DialogHeader><DialogTitle>Request deletion</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Request deletion</DialogTitle>
+          </DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              This request goes to an admin for approval. On approval, <b>{deleteTarget?.file_name}</b> and all its imported rows will be permanently removed.
+              This request goes to an admin for approval. On approval,{" "}
+              <b>{deleteTarget?.file_name}</b> and all its imported rows will be permanently
+              removed.
             </p>
             <div className="space-y-1.5">
               <Label>Reason (optional)</Label>
-              <Textarea value={deleteReason} onChange={e => setDeleteReason(e.target.value)} placeholder="e.g. Wrong date range selected, corrupted data…" rows={3} />
+              <Textarea
+                value={deleteReason}
+                onChange={(e) => setDeleteReason(e.target.value)}
+                placeholder="e.g. Wrong date range selected, corrupted data…"
+                rows={3}
+              />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>
+              Cancel
+            </Button>
             <Button onClick={() => requestDelete.mutate()} disabled={requestDelete.isPending}>
               {requestDelete.isPending ? "Sending…" : "Submit request"}
             </Button>
