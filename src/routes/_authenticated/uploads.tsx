@@ -167,9 +167,9 @@ function UploadsPage() {
       const filePath = `${uploadBucket}/${Date.now()}-${selectedFile.name}`;
       setUploadStage("Uploading file and creating report...");
       const storageUpload = supabase.storage.from("report-files").upload(filePath, selectedFile, { upsert: false });
-      const reportInsert = supabase.from("report_uploads")
+      const reportInsert = Promise.resolve(supabase.from("report_uploads")
         .insert({ kind, week_start: uploadBucket, file_name: selectedFile.name, uploaded_by: user.id, row_count: 0, status: "processing", file_path: filePath, effective_from: effectiveFrom, effective_to: effectiveTo } as any)
-        .select().single();
+        .select().single());
       const wb = await workbookPromise;
       setUploadStage("Checking rows...");
       const parsed = kind === "open_jobs" ? parseOpenJobsSheet(wb) : parseTicketsSheet(wb);
