@@ -22,6 +22,7 @@ import { Route as AuthenticatedEmailsRouteImport } from './routes/_authenticated
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedCustomersRouteImport } from './routes/_authenticated/customers'
 import { Route as AuthenticatedAnalyticsRouteImport } from './routes/_authenticated/analytics'
+import { Route as AuthenticatedSettingsCalculationGuideRouteImport } from './routes/_authenticated/settings.calculation-guide'
 
 const HowItWorksRoute = HowItWorksRouteImport.update({
   id: '/how-it-works',
@@ -87,6 +88,12 @@ const AuthenticatedAnalyticsRoute = AuthenticatedAnalyticsRouteImport.update({
   path: '/analytics',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedSettingsCalculationGuideRoute =
+  AuthenticatedSettingsCalculationGuideRouteImport.update({
+    id: '/calculation-guide',
+    path: '/calculation-guide',
+    getParentRoute: () => AuthenticatedSettingsRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -98,9 +105,10 @@ export interface FileRoutesByFullPath {
   '/emails': typeof AuthenticatedEmailsRoute
   '/history': typeof AuthenticatedHistoryRoute
   '/open-jobs': typeof AuthenticatedOpenJobsRoute
-  '/settings': typeof AuthenticatedSettingsRoute
+  '/settings': typeof AuthenticatedSettingsRouteWithChildren
   '/support': typeof AuthenticatedSupportRoute
   '/uploads': typeof AuthenticatedUploadsRoute
+  '/settings/calculation-guide': typeof AuthenticatedSettingsCalculationGuideRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -112,9 +120,10 @@ export interface FileRoutesByTo {
   '/emails': typeof AuthenticatedEmailsRoute
   '/history': typeof AuthenticatedHistoryRoute
   '/open-jobs': typeof AuthenticatedOpenJobsRoute
-  '/settings': typeof AuthenticatedSettingsRoute
+  '/settings': typeof AuthenticatedSettingsRouteWithChildren
   '/support': typeof AuthenticatedSupportRoute
   '/uploads': typeof AuthenticatedUploadsRoute
+  '/settings/calculation-guide': typeof AuthenticatedSettingsCalculationGuideRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -128,9 +137,10 @@ export interface FileRoutesById {
   '/_authenticated/emails': typeof AuthenticatedEmailsRoute
   '/_authenticated/history': typeof AuthenticatedHistoryRoute
   '/_authenticated/open-jobs': typeof AuthenticatedOpenJobsRoute
-  '/_authenticated/settings': typeof AuthenticatedSettingsRoute
+  '/_authenticated/settings': typeof AuthenticatedSettingsRouteWithChildren
   '/_authenticated/support': typeof AuthenticatedSupportRoute
   '/_authenticated/uploads': typeof AuthenticatedUploadsRoute
+  '/_authenticated/settings/calculation-guide': typeof AuthenticatedSettingsCalculationGuideRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -147,6 +157,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/support'
     | '/uploads'
+    | '/settings/calculation-guide'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -161,6 +172,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/support'
     | '/uploads'
+    | '/settings/calculation-guide'
   id:
     | '__root__'
     | '/'
@@ -176,6 +188,7 @@ export interface FileRouteTypes {
     | '/_authenticated/settings'
     | '/_authenticated/support'
     | '/_authenticated/uploads'
+    | '/_authenticated/settings/calculation-guide'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -278,8 +291,29 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAnalyticsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/settings/calculation-guide': {
+      id: '/_authenticated/settings/calculation-guide'
+      path: '/calculation-guide'
+      fullPath: '/settings/calculation-guide'
+      preLoaderRoute: typeof AuthenticatedSettingsCalculationGuideRouteImport
+      parentRoute: typeof AuthenticatedSettingsRoute
+    }
   }
 }
+
+interface AuthenticatedSettingsRouteChildren {
+  AuthenticatedSettingsCalculationGuideRoute: typeof AuthenticatedSettingsCalculationGuideRoute
+}
+
+const AuthenticatedSettingsRouteChildren: AuthenticatedSettingsRouteChildren = {
+  AuthenticatedSettingsCalculationGuideRoute:
+    AuthenticatedSettingsCalculationGuideRoute,
+}
+
+const AuthenticatedSettingsRouteWithChildren =
+  AuthenticatedSettingsRoute._addFileChildren(
+    AuthenticatedSettingsRouteChildren,
+  )
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedAnalyticsRoute: typeof AuthenticatedAnalyticsRoute
@@ -288,7 +322,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedEmailsRoute: typeof AuthenticatedEmailsRoute
   AuthenticatedHistoryRoute: typeof AuthenticatedHistoryRoute
   AuthenticatedOpenJobsRoute: typeof AuthenticatedOpenJobsRoute
-  AuthenticatedSettingsRoute: typeof AuthenticatedSettingsRoute
+  AuthenticatedSettingsRoute: typeof AuthenticatedSettingsRouteWithChildren
   AuthenticatedSupportRoute: typeof AuthenticatedSupportRoute
   AuthenticatedUploadsRoute: typeof AuthenticatedUploadsRoute
 }
@@ -300,7 +334,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedEmailsRoute: AuthenticatedEmailsRoute,
   AuthenticatedHistoryRoute: AuthenticatedHistoryRoute,
   AuthenticatedOpenJobsRoute: AuthenticatedOpenJobsRoute,
-  AuthenticatedSettingsRoute: AuthenticatedSettingsRoute,
+  AuthenticatedSettingsRoute: AuthenticatedSettingsRouteWithChildren,
   AuthenticatedSupportRoute: AuthenticatedSupportRoute,
   AuthenticatedUploadsRoute: AuthenticatedUploadsRoute,
 }

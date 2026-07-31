@@ -15,7 +15,7 @@ import { useMemo, useState } from "react";
 import { Ticket, CheckCircle2, AlertTriangle, DollarSign, ArrowUp, ArrowDown, Minus, Mail, TrendingUp, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/useAuth";
-import { isDemoMode } from "@/lib/demoMode";
+import { useDemoMode } from "@/lib/demoMode";
 import {
   DEMO_TARGETS,
   defaultLast7DaysRange,
@@ -56,7 +56,7 @@ function Dashboard() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { user } = useAuth();
-  const demoMode = isDemoMode();
+  const demoMode = useDemoMode();
   const [range, setRange] = useState<DateRangeValue>(defaultLast7DaysRange);
   const validRange = !!range.from && !!range.to && range.from <= range.to;
   const prevRange = useMemo(() => previousDateRange(range), [range]);

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Activity, Sparkles, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
-import { enableDemoMode } from "@/lib/demoMode";
+import { disableDemoMode, enableDemoMode } from "@/lib/demoMode";
 
 export const Route = createFileRoute("/")({ component: Landing });
 
@@ -16,7 +16,10 @@ function Landing() {
   useEffect(() => {
     // If already signed in, jump to dashboard.
     supabase.auth.getUser().then(({ data }) => {
-      if (data.user) router.navigate({ to: "/dashboard", replace: true });
+      if (data.user) {
+        disableDemoMode();
+        router.navigate({ to: "/dashboard", replace: true });
+      }
     });
   }, [router]);
 

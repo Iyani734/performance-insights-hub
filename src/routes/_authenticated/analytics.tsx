@@ -9,7 +9,7 @@ import { StatusPill } from "@/components/StatusPill";
 import { cn } from "@/lib/utils";
 import { TrendingUp, TrendingDown, Minus, BarChart3, Grid3x3, Sparkles } from "lucide-react";
 import { DateRangeSelect, type DateRange } from "@/components/DateRangeSelect";
-import { isDemoMode } from "@/lib/demoMode";
+import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_TARGETS, demoKpiValues } from "@/lib/demoData";
 
 export const Route = createFileRoute("/_authenticated/analytics")({ component: AnalyticsPage });
@@ -36,7 +36,7 @@ function statusBg(s: KpiStatus): string {
 
 function AnalyticsPage() {
   const [range, setRange] = useState<DateRange>({ preset: "12" });
-  const demoMode = isDemoMode();
+  const demoMode = useDemoMode();
 
   const targetsQ = useQuery({
     queryKey: ["kpi_targets", demoMode],

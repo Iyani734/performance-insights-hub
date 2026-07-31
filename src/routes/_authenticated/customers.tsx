@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { Plus, Pencil, Trash2, Mail, X } from "lucide-react";
 import { useAuth } from "@/lib/useAuth";
 import { z } from "zod";
-import { isDemoMode } from "@/lib/demoMode";
+import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_CURRENT_WEEK, demoCustomers, demoOpenJobs } from "@/lib/demoData";
 
 export const Route = createFileRoute("/_authenticated/customers")({ component: CustomersPage });
@@ -30,7 +30,7 @@ const empty: FormState = { key: "", name: "", email: "", cc: [], enabled: true }
 function CustomersPage() {
   const qc = useQueryClient();
   const { role, user } = useAuth();
-  const demoMode = isDemoMode();
+  const demoMode = useDemoMode();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
   const [form, setForm] = useState<FormState>(empty);

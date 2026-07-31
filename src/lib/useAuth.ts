@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { disableDemoMode } from "@/lib/demoMode";
 import type { User } from "@supabase/supabase-js";
 
 export type PagePerm = { page: string; can_view: boolean; can_edit: boolean };
@@ -45,6 +46,7 @@ export function useAuth(): AuthState {
         if (!cancel) setState({ user: null, role: null, isSuperAdmin: false, isAdmin: false, perms: {}, loading: false, displayName: null });
         return;
       }
+      disableDemoMode();
       const [rolesRes, permsRes, profileRes] = await Promise.all([
         supabase.from("user_roles").select("role").eq("user_id", user.id),
         supabase.from("page_permissions").select("page,can_view,can_edit").eq("user_id", user.id),

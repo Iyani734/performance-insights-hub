@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import { downloadXlsx } from "@/lib/parse";
 import { formatWeek } from "@/lib/kpi";
 import { useAuth } from "@/lib/useAuth";
-import { isDemoMode } from "@/lib/demoMode";
+import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_WEEKS, demoCustomers, demoEmailJobs, demoOpenJobs } from "@/lib/demoData";
 
 export const Route = createFileRoute("/_authenticated/emails")({ component: EmailsPage });
@@ -20,7 +20,7 @@ export const Route = createFileRoute("/_authenticated/emails")({ component: Emai
 function EmailsPage() {
   const qc = useQueryClient();
   const { user } = useAuth();
-  const demoMode = isDemoMode();
+  const demoMode = useDemoMode();
 
   const weeksQ = useQuery({
     queryKey: ["oj_weeks", demoMode],

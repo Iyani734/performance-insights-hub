@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { downloadXlsx } from "@/lib/parse";
 import { toast } from "sonner";
 import { DateRangeSelect, type DateRange } from "@/components/DateRangeSelect";
-import { isDemoMode } from "@/lib/demoMode";
+import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_TARGETS, demoKpiValues, demoUploads } from "@/lib/demoData";
 
 export const Route = createFileRoute("/_authenticated/history")({ component: HistoryPage });
@@ -37,7 +37,7 @@ const SERIES_COLORS = [
 function HistoryPage() {
   const [range, setRange] = useState<DateRange>({ preset: "12" });
   const [search, setSearch] = useState("");
-  const demoMode = isDemoMode();
+  const demoMode = useDemoMode();
 
   const targetsQ = useQuery({
     queryKey: ["kpi_targets", demoMode],

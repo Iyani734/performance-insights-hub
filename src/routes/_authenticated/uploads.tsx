@@ -14,7 +14,7 @@ import { UploadCloud, FileSpreadsheet, Trash2, CheckCircle2, AlertTriangle, Down
 import { formatWeek } from "@/lib/kpi";
 import { readWorkbook, parseTicketsSheet, parseOpenJobsSheet } from "@/lib/parse";
 import { useAuth } from "@/lib/useAuth";
-import { isDemoMode } from "@/lib/demoMode";
+import { useDemoMode } from "@/lib/demoMode";
 import {
   defaultLast7DaysRange,
   demoUploads,
@@ -63,7 +63,7 @@ function buildDemoUploadMetrics(kind: DemoUploadKind, rows: any[], effectiveTo: 
 function UploadsPage() {
   const qc = useQueryClient();
   const { user, role, isSuperAdmin, loading: authLoading } = useAuth();
-  const demoMode = isDemoMode();
+  const demoMode = useDemoMode();
   const isAdmin = isSuperAdmin || role === "admin";
   const defaultRange = defaultLast7DaysRange();
   const [kind, setKind] = useState<DemoUploadKind>("total_tickets");

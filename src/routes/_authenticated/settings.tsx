@@ -10,10 +10,10 @@ import { toast } from "sonner";
 import { useAuth, DEFAULT_PAGES } from "@/lib/useAuth";
 import type { KpiTarget } from "@/lib/kpi";
 import { useState, useEffect, useMemo } from "react";
-import { Navigate } from "@tanstack/react-router";
-import { Check, X, ShieldCheck, PencilLine, Send, Clock, CheckCircle2, XCircle, Eye, Edit3 } from "lucide-react";
+import { Link, Navigate, Outlet, useLocation } from "@tanstack/react-router";
+import { Check, X, ShieldCheck, PencilLine, Send, Clock, CheckCircle2, XCircle, Eye, Edit3, BookOpen } from "lucide-react";
 
-export const Route = createFileRoute("/_authenticated/settings")({ component: SettingsPage });
+export const Route = createFileRoute("/_authenticated/settings")({ component: SettingsRoute });
 
 const PAGE_LABELS: Record<string, string> = {
   dashboard: "Dashboard",
@@ -26,6 +26,11 @@ const PAGE_LABELS: Record<string, string> = {
   support: "Support",
   settings: "Settings",
 };
+
+function SettingsRoute() {
+  const location = useLocation();
+  return location.pathname === "/settings" ? <SettingsPage /> : <Outlet />;
+}
 
 function SettingsPage() {
   const auth = useAuth();
@@ -191,13 +196,18 @@ function SettingsPage() {
               : "Turn on Edit mode to propose changes. All edits are sent to the super admin for approval."}
           </p>
         </div>
-        {!isSuperAdmin && (
-          <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2">
-            <PencilLine className="w-4 h-4 text-primary" />
-            <span className="text-sm font-medium">Edit mode</span>
-            <Switch checked={editMode} onCheckedChange={setEditMode} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" asChild className="gap-2">
+            <Link to="/settings/calculation-guide"><BookOpen className="w-4 h-4" />Calculation guide</Link>
+          </Button>
+          {!isSuperAdmin && (
+            <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2">
+              <PencilLine className="w-4 h-4 text-primary" />
+              <span className="text-sm font-medium">Edit mode</span>
+              <Switch checked={editMode} onCheckedChange={setEditMode} />
+            </div>
+          )}
           </div>
-        )}
       </header>
 
       {/* Non-super: My access + My change requests */}

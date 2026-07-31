@@ -1,4 +1,4 @@
-import { createFileRoute, useRouter, Link } from "@tanstack/react-router";
+import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -6,13 +6,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Activity, Sparkles, Eye, EyeOff } from "lucide-react";
+import { Activity, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
+import { disableDemoMode } from "@/lib/demoMode";
 
 export const Route = createFileRoute("/auth")({ component: AuthPage });
-
-const DEMO_EMAIL = "demo@perftracker.app";
-const DEMO_PASSWORD = "demo-tracker-2026";
 
 function AuthPage() {
   const router = useRouter();
@@ -23,7 +21,6 @@ function AuthPage() {
   const [name, setName] = useState("");
   const [nickname, setNickname] = useState("");
   const [loading, setLoading] = useState(false);
-  const [demoLoading, setDemoLoading] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -45,30 +42,11 @@ function AuthPage() {
         }
         toast.success("Account created");
       }
+      disableDemoMode();
       router.navigate({ to: "/dashboard", replace: true });
     } catch (err: any) {
       toast.error(err.message ?? "Auth failed");
     } finally { setLoading(false); }
-  }
-
-  async function enterDemo() {
-    setDemoLoading(true);
-    try {
-      let res = await supabase.auth.signInWithPassword({ email: DEMO_EMAIL, password: DEMO_PASSWORD });
-      if (res.error) {
-        const signup = await supabase.auth.signUp({
-          email: DEMO_EMAIL, password: DEMO_PASSWORD,
-          options: { emailRedirectTo: window.location.origin, data: { full_name: "Demo Viewer" } },
-        });
-        if (signup.error && !/already/i.test(signup.error.message)) throw signup.error;
-        res = await supabase.auth.signInWithPassword({ email: DEMO_EMAIL, password: DEMO_PASSWORD });
-        if (res.error) throw res.error;
-      }
-      toast.success("Loaded demo workspace");
-      router.navigate({ to: "/dashboard", replace: true });
-    } catch (err: any) {
-      toast.error(err.message ?? "Could not enter demo");
-    } finally { setDemoLoading(false); }
   }
 
   return (
@@ -80,25 +58,7 @@ function AuthPage() {
           </div>
           <div>
             <h1 className="font-display text-xl font-semibold leading-tight">Performance Tracker</h1>
-            <p className="text-xs text-muted-foreground">Sign in or explore the demo</p>
-          </div>
-        </div>
-
-        <Button
-          type="button"
-          variant="secondary"
-          className="w-full mb-4 gap-2"
-          onClick={enterDemo}
-          disabled={demoLoading}
-        >
-          <Sparkles className="w-4 h-4" />
-          {demoLoading ? "Loading demo…" : "View demo dashboard (6 months of data)"}
-        </Button>
-
-        <div className="relative my-4">
-          <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
-          <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-card px-2 text-muted-foreground">Or use your account</span>
+            <p className="text-xs text-muted-foreground">Sign in to your workspace</p>
           </div>
         </div>
 
@@ -154,10 +114,7 @@ function AuthPage() {
           </form>
         </Tabs>
 
-        <p className="text-xs text-muted-foreground text-center mt-6">
-          Curious how the KPIs are calculated?{" "}
-          <Link to="/how-it-works" className="text-primary hover:underline">See the metric guide</Link>
-        </p>
+        <p className="text-xs text-muted-foreground text-center mt-6">Explore the calculation guide from Settings after signing in.</p>
       </Card>
     </div>
   );

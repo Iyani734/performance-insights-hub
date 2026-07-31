@@ -1,12 +1,13 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
 import { AppShell } from "@/components/AppShell";
-import { isDemoMode } from "@/lib/demoMode";
+import { disableDemoMode, isDemoMode } from "@/lib/demoMode";
 
 export const Route = createFileRoute("/_authenticated")({
   ssr: false,
   beforeLoad: async () => {
     const { data, error } = await supabase.auth.getUser();
+    if (data.user) disableDemoMode();
     if ((error || !data.user) && !isDemoMode()) throw redirect({ to: "/auth" });
     return { user: data?.user ?? null };
   },

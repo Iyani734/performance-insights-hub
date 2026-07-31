@@ -10,7 +10,7 @@ import { Download, Search, Briefcase } from "lucide-react";
 import { downloadXlsx } from "@/lib/parse";
 import { formatWeek } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
-import { isDemoMode } from "@/lib/demoMode";
+import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_WEEKS, demoOpenJobs } from "@/lib/demoData";
 
 export const Route = createFileRoute("/_authenticated/open-jobs")({ component: OpenJobsPage });
@@ -41,7 +41,7 @@ function ageBadge(age: number | null | undefined) {
 }
 
 function OpenJobsPage() {
-  const demoMode = isDemoMode();
+  const demoMode = useDemoMode();
   const weeksQ = useQuery({
     queryKey: ["open_jobs_weeks", demoMode],
     queryFn: async () => {
