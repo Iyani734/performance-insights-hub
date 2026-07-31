@@ -16,6 +16,7 @@ import { Ticket, CheckCircle2, AlertTriangle, DollarSign, ArrowUp, ArrowDown, Mi
 import { toast } from "sonner";
 import { useAuth } from "@/lib/useAuth";
 import { useDemoMode } from "@/lib/demoMode";
+import { isSeededDemoEmail, isSeededDemoNote, isSeededDemoSource, isSeededDemoUpload } from "@/lib/liveData";
 import {
   DEMO_TARGETS,
   defaultLast7DaysRange,
@@ -37,7 +38,7 @@ async function fetchValuesForRange(range: DateRangeValue) {
     .gte("week_start", range.from)
     .lte("week_start", range.to)
     .order("week_start");
-  return data ?? [];
+  return (data ?? []).filter((row) => !isSeededDemoSource(row.source));
 }
 
 function periodLabel(range: DateRangeValue) {
@@ -95,15 +96,19 @@ function Dashboard() {
 
   const trendsQ = useQuery({
     queryKey: ["kpi_trends", demoMode],
-    queryFn: async () => demoMode ? demoKpiValuesWithLocal() : (await supabase.from("kpi_values").select("kpi_key,week_start,actual").order("week_start")).data ?? [],
+    queryFn: async () => {
+      if (demoMode) return demoKpiValuesWithLocal();
+      const { data } = await supabase.from("kpi_values").select("kpi_key,week_start,actual,source").order("week_start");
+      return (data ?? []).filter((row) => !isSeededDemoSource(row.source));
+    },
   });
 
   const emailStatsQ = useQuery({
     queryKey: ["email_stats", range, demoMode],
     queryFn: async () => {
       if (demoMode) return demoEmailStats();
-      const { data } = await supabase.from("email_jobs").select("status").gte("week_start", range.from).lte("week_start", range.to);
-      const rows = data ?? [];
+      const { data } = await supabase.from("email_jobs").select("status,customer_email").gte("week_start", range.from).lte("week_start", range.to);
+      const rows = (data ?? []).filter((row) => !isSeededDemoEmail(row.customer_email));
       return {
         ready: rows.filter((r: any) => r.status === "pending").length,
         sent: rows.filter((r: any) => r.status === "sent").length,
@@ -116,12 +121,20 @@ function Dashboard() {
 
   const lastUploadQ = useQuery({
     queryKey: ["last_upload", demoMode],
-    queryFn: async () => demoMode ? demoUploadsWithLocal()[0] : (await supabase.from("report_uploads").select("created_at,kind").order("created_at", { ascending: false }).limit(1)).data?.[0],
+    queryFn: async () => {
+      if (demoMode) return demoUploadsWithLocal()[0];
+      const { data } = await supabase.from("report_uploads").select("created_at,kind,file_name").order("created_at", { ascending: false }).limit(50);
+      return (data ?? []).find((row) => !isSeededDemoUpload(row.file_name));
+    },
   });
 
   const notesQ = useQuery({
     queryKey: ["kpi_notes", range, demoMode],
-    queryFn: async () => demoMode ? demoNotes(range.from) : (await supabase.from("kpi_notes").select("*").gte("week_start", range.from).lte("week_start", range.to).order("created_at", { ascending: false })).data ?? [],
+    queryFn: async () => {
+      if (demoMode) return demoNotes(range.from);
+      const { data } = await supabase.from("kpi_notes").select("*").gte("week_start", range.from).lte("week_start", range.to).order("created_at", { ascending: false });
+      return (data ?? []).filter((row) => !isSeededDemoNote(row.author_name));
+    },
     enabled: validRange,
   });
 

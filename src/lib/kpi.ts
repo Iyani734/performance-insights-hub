@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { isSeededDemoPayload } from "@/lib/liveData";
 
 export type KpiTarget = {
   id: string;
@@ -62,11 +63,11 @@ export async function computeAutoKpis(week: string) {
 
 export async function computeAutoKpisForRange(from: string, to: string) {
   const [ticketsRes, invRes] = await Promise.all([
-    supabase.from("tickets").select("final_edited_by,void_reason,date_recv,kind").gte("week_start", from).lte("week_start", to).eq("kind", "tickets"),
-    supabase.from("tickets").select("final_edited_by,void_reason,date_recv,kind").gte("week_start", from).lte("week_start", to).eq("kind", "invoiced"),
+    supabase.from("tickets").select("final_edited_by,void_reason,date_recv,kind,raw").gte("week_start", from).lte("week_start", to).eq("kind", "tickets"),
+    supabase.from("tickets").select("final_edited_by,void_reason,date_recv,kind,raw").gte("week_start", from).lte("week_start", to).eq("kind", "invoiced"),
   ]);
-  const tickets = ticketsRes.data ?? [];
-  const invoiced = invRes.data ?? [];
+  const tickets = (ticketsRes.data ?? []).filter((row) => !isSeededDemoPayload(row.raw));
+  const invoiced = (invRes.data ?? []).filter((row) => !isSeededDemoPayload(row.raw));
 
   const reviewFinal = tickets.length
     ? (tickets.filter((r: any) => r.final_edited_by).length / tickets.length) * 100

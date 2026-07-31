@@ -19,6 +19,7 @@ export type ParsedTicket = {
 };
 
 export type ParseStats = {
+  source_rows: number;
   imported: number;
   skipped: number;
   errors: number;
@@ -63,7 +64,7 @@ export async function readWorkbook(file: File): Promise<XLSX.WorkBook> {
 export function parseTicketsSheet(wb: XLSX.WorkBook): { rows: ParsedTicket[]; stats: ParseStats } {
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const raw = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: null });
-  const stats: ParseStats = { imported: 0, skipped: 0, errors: 0, error_details: [] };
+  const stats: ParseStats = { source_rows: raw.length, imported: 0, skipped: 0, errors: 0, error_details: [] };
   const rows: ParsedTicket[] = [];
   raw.forEach((r, i) => {
     try {
@@ -112,7 +113,7 @@ export type ParsedOpenJob = {
 
 // Handles both grouped ("Customer: KEY - Name" section headers) and flat tables.
 export function parseOpenJobsSheet(wb: XLSX.WorkBook): { rows: ParsedOpenJob[]; stats: ParseStats } {
-  const stats: ParseStats = { imported: 0, skipped: 0, errors: 0, error_details: [] };
+  const stats: ParseStats = { source_rows: 0, imported: 0, skipped: 0, errors: 0, error_details: [] };
   const sheet = wb.Sheets[wb.SheetNames[0]];
 
   // First try: keyed rows (typical CSV/XLSX export with headers)
@@ -122,6 +123,7 @@ export function parseOpenJobsSheet(wb: XLSX.WorkBook): { rows: ParsedOpenJob[]; 
     Object.keys(keyed[0]).some(k => /job|ticket/i.test(k));
 
   if (keyedHasHeaders) {
+    stats.source_rows = keyed.length;
     const rows: ParsedOpenJob[] = [];
     keyed.forEach((r, i) => {
       try {
@@ -154,6 +156,7 @@ export function parseOpenJobsSheet(wb: XLSX.WorkBook): { rows: ParsedOpenJob[]; 
 
   // Fallback: the grouped section-header layout
   const arrRows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1, defval: null });
+  stats.source_rows = arrRows.length;
   const rows: ParsedOpenJob[] = [];
   let currentKey = "UNKNOWN";
   let currentName = "Unknown Customer";

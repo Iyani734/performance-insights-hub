@@ -11,6 +11,7 @@ import { TrendingUp, TrendingDown, Minus, BarChart3, Grid3x3, Sparkles } from "l
 import { DateRangeSelect, type DateRange } from "@/components/DateRangeSelect";
 import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_TARGETS, demoKpiValues } from "@/lib/demoData";
+import { isSeededDemoSource } from "@/lib/liveData";
 
 export const Route = createFileRoute("/_authenticated/analytics")({ component: AnalyticsPage });
 
@@ -45,7 +46,11 @@ function AnalyticsPage() {
 
   const valuesQ = useQuery({
     queryKey: ["kpi_values_all", demoMode],
-    queryFn: async () => demoMode ? demoKpiValues() as Row[] : ((await supabase.from("kpi_values").select("kpi_key,week_start,actual").order("week_start")).data ?? []) as Row[],
+    queryFn: async () => {
+      if (demoMode) return demoKpiValues() as Row[];
+      const { data } = await supabase.from("kpi_values").select("kpi_key,week_start,actual,source").order("week_start");
+      return (data ?? []).filter((row) => !isSeededDemoSource(row.source)) as Row[];
+    },
   });
 
   const targets = targetsQ.data ?? [];

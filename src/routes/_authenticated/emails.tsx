@@ -14,6 +14,7 @@ import { formatWeek } from "@/lib/kpi";
 import { useAuth } from "@/lib/useAuth";
 import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_WEEKS, demoCustomers, demoEmailJobs, demoOpenJobs } from "@/lib/demoData";
+import { isSeededDemoEmail, isSeededDemoPayload } from "@/lib/liveData";
 
 export const Route = createFileRoute("/_authenticated/emails")({ component: EmailsPage });
 
@@ -26,8 +27,8 @@ function EmailsPage() {
     queryKey: ["oj_weeks", demoMode],
     queryFn: async () => {
       if (demoMode) return DEMO_WEEKS;
-      const { data } = await supabase.from("open_jobs").select("week_start").order("week_start", { ascending: false });
-      return Array.from(new Set((data ?? []).map((r: any) => r.week_start as string)));
+      const { data } = await supabase.from("open_jobs").select("week_start,details").order("week_start", { ascending: false });
+      return Array.from(new Set((data ?? []).filter((row) => !isSeededDemoPayload(row.details)).map((r: any) => r.week_start as string)));
     },
   });
   const [week, setWeek] = useState<string | null>(null);
@@ -39,14 +40,18 @@ function EmailsPage() {
       if (!w) return [];
       if (demoMode) return demoOpenJobs(w);
       const { data } = await supabase.from("open_jobs").select("*").eq("week_start", w);
-      return data ?? [];
+      return (data ?? []).filter((row) => !isSeededDemoPayload(row.details));
     },
     enabled: !!w,
   });
 
   const custsQ = useQuery({
     queryKey: ["customers", demoMode],
-    queryFn: async () => demoMode ? demoCustomers() : (await supabase.from("customers").select("*")).data ?? [],
+    queryFn: async () => {
+      if (demoMode) return demoCustomers();
+      const { data } = await supabase.from("customers").select("*");
+      return (data ?? []).filter((row) => !isSeededDemoEmail(row.email));
+    },
   });
 
   const emailJobsQ = useQuery({
@@ -55,7 +60,7 @@ function EmailsPage() {
       if (!w) return [];
       if (demoMode) return demoEmailJobs(w);
       const { data } = await supabase.from("email_jobs").select("*").eq("week_start", w).order("created_at", { ascending: false });
-      return data ?? [];
+      return (data ?? []).filter((row) => !isSeededDemoEmail(row.customer_email));
     },
     enabled: !!w,
   });

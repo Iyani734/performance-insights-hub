@@ -15,6 +15,7 @@ import { useAuth } from "@/lib/useAuth";
 import { z } from "zod";
 import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_CURRENT_WEEK, demoCustomers, demoOpenJobs } from "@/lib/demoData";
+import { isSeededDemoEmail, isSeededDemoPayload } from "@/lib/liveData";
 
 export const Route = createFileRoute("/_authenticated/customers")({ component: CustomersPage });
 
@@ -38,7 +39,11 @@ function CustomersPage() {
 
   const custsQ = useQuery({
     queryKey: ["customers", demoMode],
-    queryFn: async () => demoMode ? demoCustomers() : ((await supabase.from("customers").select("*").order("name")).data ?? []),
+    queryFn: async () => {
+      if (demoMode) return demoCustomers();
+      const { data } = await supabase.from("customers").select("*").order("name");
+      return (data ?? []).filter((row) => !isSeededDemoEmail(row.email));
+    },
   });
 
   const jobsCountQ = useQuery({
@@ -49,12 +54,12 @@ function CustomersPage() {
         for (const r of demoOpenJobs(DEMO_CURRENT_WEEK)) map[r.customer_key] = (map[r.customer_key] ?? 0) + 1;
         return map;
       }
-      const { data: latest } = await supabase.from("open_jobs").select("week_start").order("week_start", { ascending: false }).limit(1);
-      const week = latest?.[0]?.week_start;
+      const { data: latest } = await supabase.from("open_jobs").select("week_start,details").order("week_start", { ascending: false });
+      const week = latest?.find((row) => !isSeededDemoPayload(row.details))?.week_start;
       if (!week) return {} as Record<string, number>;
-      const { data } = await supabase.from("open_jobs").select("customer_key").eq("week_start", week);
+      const { data } = await supabase.from("open_jobs").select("customer_key,details").eq("week_start", week);
       const map: Record<string, number> = {};
-      for (const r of data ?? []) map[r.customer_key] = (map[r.customer_key] ?? 0) + 1;
+      for (const r of data ?? []) if (!isSeededDemoPayload(r.details)) map[r.customer_key] = (map[r.customer_key] ?? 0) + 1;
       return map;
     },
   });

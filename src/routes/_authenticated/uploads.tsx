@@ -15,6 +15,7 @@ import { formatWeek } from "@/lib/kpi";
 import { readWorkbook, parseTicketsSheet, parseOpenJobsSheet } from "@/lib/parse";
 import { useAuth } from "@/lib/useAuth";
 import { useDemoMode } from "@/lib/demoMode";
+import { isSeededDemoUpload } from "@/lib/liveData";
 import {
   defaultLast7DaysRange,
   demoUploads,
@@ -79,7 +80,10 @@ function UploadsPage() {
   const uploadsQ = useQuery({
     queryKey: ["uploads"],
     enabled: !demoMode,
-    queryFn: async () => (await supabase.from("report_uploads").select("*").order("created_at", { ascending: false }).limit(50)).data ?? [],
+    queryFn: async () => {
+      const { data } = await supabase.from("report_uploads").select("*").order("created_at", { ascending: false }).limit(50);
+      return (data ?? []).filter((row) => !isSeededDemoUpload(row.file_name));
+    },
   });
 
   const profilesQ = useQuery({
@@ -145,7 +149,7 @@ function UploadsPage() {
       if (!user) throw new Error("Sign in to upload files.");
       const filePath = `${uploadBucket}/${Date.now()}-${selectedFile.name}`;
       const { error: sErr } = await supabase.storage.from("report-files").upload(filePath, selectedFile, { upsert: false });
-      if (sErr) console.warn("Storage upload failed:", sErr.message);
+      if (sErr) throw new Error(`Could not store the original file: ${sErr.message}`);
       const { data: up, error } = await supabase.from("report_uploads")
         .insert({ kind, week_start: uploadBucket, file_name: selectedFile.name, uploaded_by: user.id, row_count: 0, status: "processing", file_path: filePath, effective_from: effectiveFrom, effective_to: effectiveTo } as any)
         .select().single();
@@ -190,7 +194,10 @@ function UploadsPage() {
           return next;
         });
       }
-      toast.success(`${s.imported} imported${s.skipped ? `, ${s.skipped} skipped` : ""}${s.errors ? `, ${s.errors} errors` : ""}`);
+      const rowSummary = s.source_rows === s.imported
+        ? `${s.imported} data rows imported`
+        : `${s.source_rows} data rows found; ${s.imported} imported${s.skipped ? `, ${s.skipped} skipped` : ""}${s.errors ? `, ${s.errors} errors` : ""}`;
+      toast.success(rowSummary);
       setFile(null);
       setFileInputKey((v) => v + 1);
       qc.invalidateQueries();
@@ -285,7 +292,7 @@ function UploadsPage() {
             <Label>File (.xlsx / .xls)</Label>
             <Input key={fileInputKey} type="file" accept=".xlsx,.xls" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
             <p className="text-xs text-muted-foreground">
-              Pick the date range this file's data actually covers.
+              Pick the date range this file's data actually covers. The header row is not counted as imported data.
             </p>
             {fileError && <p className="text-xs text-destructive">{fileError}</p>}
           </div>

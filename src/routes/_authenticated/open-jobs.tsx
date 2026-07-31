@@ -12,6 +12,7 @@ import { formatWeek } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
 import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_WEEKS, demoOpenJobs } from "@/lib/demoData";
+import { isSeededDemoPayload } from "@/lib/liveData";
 
 export const Route = createFileRoute("/_authenticated/open-jobs")({ component: OpenJobsPage });
 
@@ -46,8 +47,8 @@ function OpenJobsPage() {
     queryKey: ["open_jobs_weeks", demoMode],
     queryFn: async () => {
       if (demoMode) return DEMO_WEEKS;
-      const { data } = await supabase.from("open_jobs").select("week_start").order("week_start", { ascending: false });
-      return Array.from(new Set((data ?? []).map((r: any) => r.week_start as string)));
+      const { data } = await supabase.from("open_jobs").select("week_start,details").order("week_start", { ascending: false });
+      return Array.from(new Set((data ?? []).filter((row) => !isSeededDemoPayload(row.details)).map((r: any) => r.week_start as string)));
     },
   });
   const [week, setWeek] = useState<string | null>(null);
@@ -59,7 +60,7 @@ function OpenJobsPage() {
       if (!selectedWeek) return [];
       if (demoMode) return demoOpenJobs(selectedWeek);
       const { data } = await supabase.from("open_jobs").select("*").eq("week_start", selectedWeek).order("customer_name");
-      return data ?? [];
+      return (data ?? []).filter((row) => !isSeededDemoPayload(row.details));
     },
     enabled: !!selectedWeek,
   });

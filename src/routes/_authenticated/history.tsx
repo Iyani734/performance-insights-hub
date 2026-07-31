@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { DateRangeSelect, type DateRange } from "@/components/DateRangeSelect";
 import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_TARGETS, demoKpiValues, demoUploads } from "@/lib/demoData";
+import { isSeededDemoSource, isSeededDemoUpload } from "@/lib/liveData";
 
 export const Route = createFileRoute("/_authenticated/history")({ component: HistoryPage });
 
@@ -46,12 +47,20 @@ function HistoryPage() {
 
   const valuesQ = useQuery({
     queryKey: ["kpi_values_all", demoMode],
-    queryFn: async () => demoMode ? [...demoKpiValues()].sort((a, b) => b.week_start.localeCompare(a.week_start)) : ((await supabase.from("kpi_values").select("*").order("week_start", { ascending: false })).data ?? []),
+    queryFn: async () => {
+      if (demoMode) return [...demoKpiValues()].sort((a, b) => b.week_start.localeCompare(a.week_start));
+      const { data } = await supabase.from("kpi_values").select("*").order("week_start", { ascending: false });
+      return (data ?? []).filter((row) => !isSeededDemoSource(row.source));
+    },
   });
 
   const uploadsQ = useQuery({
     queryKey: ["uploads_history", demoMode],
-    queryFn: async () => demoMode ? demoUploads() : ((await supabase.from("report_uploads").select("*").order("created_at", { ascending: false }).limit(200)).data ?? []),
+    queryFn: async () => {
+      if (demoMode) return demoUploads();
+      const { data } = await supabase.from("report_uploads").select("*").order("created_at", { ascending: false }).limit(200);
+      return (data ?? []).filter((row) => !isSeededDemoUpload(row.file_name));
+    },
   });
 
   const targets = targetsQ.data ?? [];
