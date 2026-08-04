@@ -282,6 +282,21 @@ function UploadsPage() {
             const { error } = await supabase.from("open_jobs").insert(batch as any);
             if (error) throw error;
           });
+          const customers = Array.from(
+            parsed.rows.reduce((map, row) => {
+              if (row.customer_key && row.customer_name) {
+                map.set(row.customer_key, row.customer_name);
+              }
+              return map;
+            }, new Map<string, string>()),
+          ).map(([key, name]) => ({ key, name, updated_at: new Date().toISOString() }));
+          if (customers.length) {
+            setUploadStage(`Updating ${customers.length} customers...`);
+            const { error } = await supabase
+              .from("customers")
+              .upsert(customers, { onConflict: "key" });
+            if (error) throw error;
+          }
         } else if (kind !== "ticket_qc") {
           const tKind = kind === "active_review_final" ? "tickets" : "invoiced";
           const payload = parsed.rows.map((r) => ({

@@ -25,8 +25,15 @@ const schema = z.object({
   email: z.string().trim().email().max(255).optional().or(z.literal("")),
 });
 
-type FormState = { key: string; name: string; email: string; cc: string[]; enabled: boolean };
-const empty: FormState = { key: "", name: "", email: "", cc: [], enabled: true };
+type FormState = {
+  key: string;
+  name: string;
+  email: string;
+  cc: string[];
+  lastEmail: string;
+  enabled: boolean;
+};
+const empty: FormState = { key: "", name: "", email: "", cc: [], lastEmail: "", enabled: true };
 
 function CustomersPage() {
   const qc = useQueryClient();
@@ -68,7 +75,15 @@ function CustomersPage() {
     mutationFn: async () => {
       const parsed = schema.safeParse(form);
       if (!parsed.success) throw new Error(parsed.error.issues[0].message);
-      const payload = { key: form.key, name: form.name, email: form.email || null, cc_emails: form.cc, enabled: form.enabled };
+      const payload = {
+        key: form.key,
+        name: form.name,
+        email: form.email || null,
+        cc_emails: form.cc,
+        last_email_sent_at: form.lastEmail ? new Date(form.lastEmail).toISOString() : null,
+        enabled: form.enabled,
+        updated_at: new Date().toISOString(),
+      };
       if (editing) {
         const { error } = await supabase.from("customers").update(payload).eq("id", editing.id);
         if (error) throw error;
@@ -113,7 +128,14 @@ function CustomersPage() {
 
   function edit(c: any) {
     setEditing(c);
-    setForm({ key: c.key, name: c.name, email: c.email ?? "", cc: c.cc_emails ?? [], enabled: c.enabled ?? true });
+    setForm({
+      key: c.key,
+      name: c.name,
+      email: c.email ?? "",
+      cc: c.cc_emails ?? [],
+      lastEmail: toDateTimeInput(c.last_email_sent_at),
+      enabled: c.enabled ?? true,
+    });
     setOpen(true);
   }
 
@@ -133,7 +155,7 @@ function CustomersPage() {
           <h1 className="font-display text-3xl font-semibold">Customers</h1>
           <p className="text-sm text-muted-foreground mt-1">Manage recipients for Open Jobs reports.</p>
         </div>
-        {role === "admin" && (
+        {user && (
           <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setEditing(null); setForm(empty); }}}>
             <DialogTrigger asChild>
               <Button onClick={() => { setEditing(null); setForm(empty); }}>
@@ -162,6 +184,14 @@ function CustomersPage() {
                       </Badge>
                     ))}
                   </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Last email sent</Label>
+                  <Input
+                    type="datetime-local"
+                    value={form.lastEmail}
+                    onChange={(e) => setForm({ ...form, lastEmail: e.target.value })}
+                  />
                 </div>
                 <div className="flex items-center justify-between border rounded-md px-3 py-2">
                   <div>
@@ -208,14 +238,14 @@ function CustomersPage() {
                 <td className="px-6 py-3 text-right font-semibold">{jobsCountQ.data?.[c.key] ?? 0}</td>
                 <td className="px-6 py-3 text-muted-foreground text-xs">{c.last_email_sent_at ? new Date(c.last_email_sent_at).toLocaleString() : "—"}</td>
                 <td className="px-6 py-3">
-                  <Switch checked={!!c.enabled} onCheckedChange={(v) => toggleEnabled.mutate({ id: c.id, enabled: v })} disabled={role !== "admin"} />
+                  <Switch checked={!!c.enabled} onCheckedChange={(v) => toggleEnabled.mutate({ id: c.id, enabled: v })} disabled={!user} />
                 </td>
                 <td className="px-6 py-3 text-right space-x-1 whitespace-nowrap">
                   <Button size="sm" variant="ghost" onClick={() => testEmail.mutate(c)} disabled={!c.email} title="Queue test email">
                     <Mail className="w-4 h-4" />
                   </Button>
+                  {user && <Button size="sm" variant="ghost" onClick={() => edit(c)}><Pencil className="w-4 h-4" /></Button>}
                   {role === "admin" && <>
-                    <Button size="sm" variant="ghost" onClick={() => edit(c)}><Pencil className="w-4 h-4" /></Button>
                     <Button size="sm" variant="ghost" onClick={() => confirm("Delete this customer?") && del.mutate(c.id)}><Trash2 className="w-4 h-4 text-destructive" /></Button>
                   </>}
                 </td>
@@ -230,4 +260,12 @@ function CustomersPage() {
       </Card>
     </div>
   );
+}
+
+function toDateTimeInput(value: string | null | undefined) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offsetMs = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
 }

@@ -111,6 +111,8 @@ export type Database = {
           error: string | null
           id: string
           job_count: number | null
+          provider: string | null
+          resend_message_id: string | null
           scheduled_for: string | null
           sent_at: string | null
           status: string
@@ -129,6 +131,8 @@ export type Database = {
           error?: string | null
           id?: string
           job_count?: number | null
+          provider?: string | null
+          resend_message_id?: string | null
           scheduled_for?: string | null
           sent_at?: string | null
           status?: string
@@ -147,6 +151,8 @@ export type Database = {
           error?: string | null
           id?: string
           job_count?: number | null
+          provider?: string | null
+          resend_message_id?: string | null
           scheduled_for?: string | null
           sent_at?: string | null
           status?: string
