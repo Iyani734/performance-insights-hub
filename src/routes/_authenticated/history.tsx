@@ -18,6 +18,7 @@ import { DateRangeSelect, type DateRange } from "@/components/DateRangeSelect";
 import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_TARGETS, demoKpiValues, demoUploads } from "@/lib/demoData";
 import { isSeededDemoSource, isSeededDemoUpload } from "@/lib/liveData";
+import { reportKindLabel } from "@/lib/reportTypes";
 
 export const Route = createFileRoute("/_authenticated/history")({ component: HistoryPage });
 
@@ -376,7 +377,7 @@ function HistoryPage() {
                     <tr key={u.id} className="border-t hover:bg-muted/30">
                       <td className="px-6 py-2.5 text-muted-foreground whitespace-nowrap">{new Date(u.created_at).toLocaleString()}</td>
                       <td className="px-6 py-2.5 whitespace-nowrap">{formatWeek(u.week_start)}</td>
-                      <td className="px-6 py-2.5">{u.kind}</td>
+                      <td className="px-6 py-2.5">{reportKindLabel(u.kind)}</td>
                       <td className="px-6 py-2.5 text-muted-foreground truncate max-w-[280px]">{u.file_name}</td>
                       <td className="px-6 py-2.5 text-right font-medium">{u.row_count ?? 0}</td>
                       <td className="px-6 py-2.5 text-right">

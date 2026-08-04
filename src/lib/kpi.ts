@@ -1,12 +1,15 @@
 import { supabase } from "@/integrations/supabase/client";
-import { isSeededDemoPayload } from "@/lib/liveData";
+import { isSeededDemoPayload, isSeededDemoUpload } from "@/lib/liveData";
 import {
-  calculateInvoiceCycleTime,
-  calculateReviewToFinalEdit,
-  calculateTicketQuality,
+  calculateTotalCycleTime,
   hasValue,
   normalizeTicketStatus,
 } from "@/lib/kpiRules";
+import {
+  isActiveReviewFinalUpload,
+  isTicketQcUpload,
+  isTotalCycleTimeUpload,
+} from "@/lib/reportTypes";
 
 export type KpiTarget = {
   id: string;
@@ -69,45 +72,77 @@ export async function computeAutoKpis(week: string) {
 }
 
 export async function computeAutoKpisForRange(from: string, to: string) {
-  const [ticketsRes, invRes] = await Promise.all([
-    supabase
-      .from("tickets")
-      .select("final_edited_by,void_reason,date_recv,kind,status,raw")
-      .gte("week_start", from)
-      .lte("week_start", to)
-      .eq("kind", "tickets"),
-    supabase
-      .from("tickets")
-      .select("final_edited_by,void_reason,date_recv,kind,status,raw")
-      .gte("week_start", from)
-      .lte("week_start", to)
-      .eq("kind", "invoiced"),
+  const uploads = await fetchUploadsForRange(from, to);
+  const activeUploads = uploads.filter(isActiveReviewFinalUpload);
+  const qcUploads = uploads.filter(isTicketQcUpload);
+  const cycleUploads = uploads.filter(isTotalCycleTimeUpload);
+
+  const [tickets, cycleRows] = await Promise.all([
+    fetchTicketRowsByUploadIds(activeUploads.map((upload) => upload.id), "tickets"),
+    fetchTicketRowsByUploadIds(cycleUploads.map((upload) => upload.id), "invoiced"),
   ]);
-  const tickets = (ticketsRes.data ?? []).filter((row) => !isSeededDemoPayload(row.raw));
-  const invoiced = (invRes.data ?? []).filter((row) => !isSeededDemoPayload(row.raw));
 
-  const reviewFinal = calculateReviewToFinalEdit(tickets, from, to);
-  const quality = calculateTicketQuality(invoiced, tickets);
-
-  const dispatchCompletion = tickets.length
-    ? (tickets.filter((r: any) => !hasValue(r.void_reason)).length / tickets.length) * 100
-    : null;
   const statusMatches = (status: unknown, value: string) => normalizeTicketStatus(status) === value;
-  const invoiceCycleTime = calculateInvoiceCycleTime(tickets, to);
+  const qcTickets = sumImportedRows(qcUploads);
+  const totalCycleTime = calculateTotalCycleTime(cycleRows);
 
   return {
-    review_to_final_edit: reviewFinal,
-    ticket_quality: quality.actual,
-    invoice_cycle_time: invoiceCycleTime,
-    dispatch_completion: dispatchCompletion,
+    review_to_final_edit: qcTickets > 0 ? qcTickets : null,
+    ticket_quality: null,
+    invoice_cycle_time: totalCycleTime,
+    dispatch_completion: null,
     totals: {
       tickets: tickets.length,
-      invoiced: invoiced.length,
-      quality_issues: quality.issues,
+      invoiced: cycleRows.length,
+      quality_issues: 0,
+      qc_tickets: qcTickets,
+      cycle_time_rows: cycleRows.length,
       voided: tickets.filter((r: any) => hasValue(r.void_reason)).length,
       active_tickets: tickets.filter((r: any) => statusMatches(r.status, "active")).length,
       review_tickets: tickets.filter((r: any) => statusMatches(r.status, "review")).length,
       final_edit_tickets: tickets.filter((r: any) => statusMatches(r.status, "final edit")).length,
     },
   };
+}
+
+type UploadLike = {
+  id: string;
+  kind: string | null;
+  file_name: string | null;
+  row_count: number | null;
+  week_start: string;
+  effective_from: string | null;
+  effective_to: string | null;
+  status: string | null;
+};
+
+async function fetchUploadsForRange(from: string, to: string): Promise<UploadLike[]> {
+  const { data } = await supabase
+    .from("report_uploads")
+    .select("id,kind,file_name,row_count,week_start,effective_from,effective_to,status")
+    .order("created_at", { ascending: false })
+    .limit(1000);
+
+  return ((data ?? []) as UploadLike[]).filter((upload) => {
+    if (isSeededDemoUpload(upload.file_name)) return false;
+    if (upload.status === "failed" || upload.status === "processing") return false;
+    const uploadFrom = upload.effective_from ?? upload.week_start;
+    const uploadTo = upload.effective_to ?? addDaysUtc(upload.week_start, 6);
+    return uploadFrom <= to && uploadTo >= from;
+  });
+}
+
+async function fetchTicketRowsByUploadIds(uploadIds: string[], kind: "tickets" | "invoiced") {
+  if (!uploadIds.length) return [];
+  const { data } = await supabase
+    .from("tickets")
+    .select("upload_id,final_edited_by,void_reason,date_recv,kind,status,raw")
+    .in("upload_id", uploadIds)
+    .eq("kind", kind);
+
+  return (data ?? []).filter((row) => !isSeededDemoPayload(row.raw));
+}
+
+function sumImportedRows(uploads: UploadLike[]) {
+  return uploads.reduce((sum, upload) => sum + Math.max(0, Number(upload.row_count ?? 0)), 0);
 }

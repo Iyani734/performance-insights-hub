@@ -32,28 +32,28 @@ const METRICS: MetricSpec[] = [
     key: "invoice_cycle_time",
     label: "Invoice Cycle Time (Final Edit to Invoice)",
     target: "<= 3 days",
-    source: "Total Tickets export filtered to Final Edit",
-    formula: "business days from oldest Final Edit Deliver/Pickup date to selected To date, not today's date",
-    columns: ["Status", "Deliver/Pickup"],
-    why: "This follows the ARC TCR instruction: select Final Edit, sort by Deliver/Pickup, then count business days to the To date selected in the calendar. It never uses today's date. June 10 to June 17 counts as 5 business days.",
+    source: "Total Cycle Time export. The file name must include total cycle time.",
+    formula: "business days from the oldest Deliver/Pickup date to today, excluding weekends",
+    columns: ["Column J: Deliver/Pickup"],
+    why: "The app sorts Deliver/Pickup dates from oldest to newest, uses the oldest date, then counts business days through the current day.",
   },
   {
     key: "review_to_final_edit",
-    label: "Tickets Moving Through - Review to Final Edit",
-    target: ">= 95%",
-    source: "Total Tickets export",
-    formula: "count(tickets in Final Edit status) / count(all tickets) x 100",
-    columns: ["Status", "Date Final Edited", "Final Edited By", "FinalEditedBy"],
-    why: "Matches the TCR workflow: count weekly tickets, then count tickets completed through Final Edit. If Date Final Edited exists, the app uses it for the selected range; otherwise it uses Status F/Final Edit.",
+    label: "Tickets QC'd - Review to Final Edit",
+    target: "QC row count",
+    source: "Ticket QC export. The file name must include QC.",
+    formula: "total imported data rows in the QC file",
+    columns: ["Any ticket rows"],
+    why: "For now this metric displays the number of tickets in the QC file. The earlier percentage calculation is no longer used.",
   },
   {
     key: "ticket_quality",
     label: "Ticket Quality",
     target: "< 3%",
-    source: "Total Invoiced export plus billing quality issue tracking",
+    source: "Manual entry or a future dedicated quality issue source",
     formula: "quality issue count / total invoiced tickets x 100",
     columns: ["Void Reason", "Driver Error", "Quality Issue"],
-    why: "The ARC metric is a quality-error rate, so lower is better. When the upload contains a quality flag such as Void Reason, the app counts it automatically; otherwise the invoicing quality tracker/manual entry supplies the issue count.",
+    why: "The ARC metric is a quality-error rate, so lower is better. The current Active/Review/Final, QC, and Total Cycle Time files do not calculate this automatically.",
   },
   {
     key: "dispatch_responsiveness",
@@ -95,11 +95,11 @@ const METRICS: MetricSpec[] = [
     key: "status_snapshot",
     label: "Ticket Status Snapshot",
     target: "No target",
-    source: "Total Tickets export",
+    source: "Active/Review/Final export. The file name must include active, review, and final.",
     formula:
-      "count Status values matching Active, Review, and Final Edit; codes A, R, and F are recognized",
-    columns: ["Status"],
-    why: "Active is Status A/Active, Review is Status R/Review, and Final Edit is Status F/Final Edit. This gives the dashboard and analytics snapshot directly from uploaded TCR data.",
+      "count Status values in column F: A is Active, E or R is Review, and F is Final Edit",
+    columns: ["Column F: Status"],
+    why: "This gives the dashboard and analytics snapshot directly from the Active/Review/Final source file.",
   },
 ];
 
@@ -122,7 +122,7 @@ function HowItWorks() {
         <header className="space-y-3">
           <h1 className="font-display text-4xl font-semibold">How the KPIs are calculated</h1>
           <p className="text-muted-foreground">
-            Performance Tracker follows the ARC TCR workflow where the export has enough data, and
+            Performance Tracker now reads each automatic metric from a specific source file name and
             marks the remaining operations metrics as manual.
           </p>
         </header>
@@ -132,16 +132,16 @@ function HowItWorks() {
             <Upload className="w-5 h-5 text-primary mb-2" />
             <div className="font-medium">1. Upload the exports</div>
             <p className="text-sm text-muted-foreground mt-1">
-              Use the report type selector so Total Tickets, Total Invoiced, and Open Jobs rows go
-              into the right calculation group.
+              Use file names containing active review final, QC, total cycle time, or open jobs so
+              rows go into the right calculation group.
             </p>
           </Card>
           <Card className="p-5">
             <Calculator className="w-5 h-5 text-primary mb-2" />
             <div className="font-medium">2. Automatic KPIs run</div>
             <p className="text-sm text-muted-foreground mt-1">
-              The dashboard uses the selected From and To dates, with the To date acting as the
-              report date for invoice cycle time.
+              The dashboard uses the selected From and To dates to choose matching uploads. Total
+              Cycle Time then counts business days through today.
             </p>
           </Card>
           <Card className="p-5">
@@ -160,12 +160,12 @@ function HowItWorks() {
             <h2 className="font-display text-lg font-semibold">Expected upload columns</h2>
           </div>
           <p className="text-sm text-muted-foreground mb-4">
-            The parser reads a single sheet with a header row. Column order does not matter, but the
-            header names should match the TCR export.
+            The parser reads a single sheet with a header row. Active/Review/Final expects Status in
+            column F, and Total Cycle Time expects Deliver/Pickup in column J.
           </p>
           <div className="grid md:grid-cols-2 gap-4 text-sm">
             <div>
-              <div className="font-medium mb-1">Total Tickets / Total Invoiced</div>
+              <div className="font-medium mb-1">Active/Review/Final, Ticket QC, Total Cycle Time</div>
               <ul className="list-disc list-inside space-y-0.5 text-muted-foreground">
                 <li>
                   <code>Ticket #</code> or <code>TicketID</code>
@@ -183,13 +183,13 @@ function HowItWorks() {
                   <code>Deliver/Pickup</code>, <code>Rental Start</code>, <code>Date Recv</code>
                 </li>
                 <li>
-                  <code>Date Final Edited</code>, when exported
+                  Active/Review/Final uses column F <code>Status</code>
                 </li>
                 <li>
-                  <code>Final Edited By</code> / <code>FinalEditedBy</code>
+                  Total Cycle Time uses column J <code>Deliver/Pickup</code>
                 </li>
                 <li>
-                  <code>Void Reason</code>, when used as a quality flag
+                  Ticket QC uses the total imported data rows
                 </li>
               </ul>
             </div>

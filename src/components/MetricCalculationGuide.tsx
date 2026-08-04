@@ -14,25 +14,24 @@ type MetricDefinition = {
 
 const METRICS: MetricDefinition[] = [
   {
-    label: "Tickets Moving Through - Review to Final Edit",
+    label: "Tickets QC'd - Review to Final Edit",
     owner: "Dispatch",
     cadence: "Weekly",
-    target: ">= 95%",
-    source: "Total Tickets uploads",
-    formula:
-      "Tickets in Final Edit status / all tickets x 100. If Date Final Edited exists, only rows final edited inside the selected range are counted.",
-    columns: ["Status", "Date Final Edited", "Final Edited By", "FinalEditedBy"],
-    note: "This follows the TCR process: count weekly tickets, then count tickets completed through Final Edit. If the export has no final-edit date, Status F/Final Edit is used; FinalEditedBy is only a fallback.",
+    target: "QC row count",
+    source: "Ticket QC uploads. The file name must include QC, for example Ticket QC 07_31_26.xlsx.",
+    formula: "Total imported data rows in the QC file. The header row is not counted.",
+    columns: ["Any ticket rows"],
+    note: "For now this metric displays the number of tickets in the QC file. The earlier percentage calculation is no longer used.",
   },
   {
     label: "Ticket Quality",
     owner: "Dispatch/Drivers",
     cadence: "Monthly",
     target: "< 3%",
-    source: "Total Invoiced uploads plus the billing quality-issue tracker",
+    source: "Manual entry or a future dedicated quality issue source",
     formula: "Quality issue count / total invoiced tickets x 100.",
     columns: ["Void Reason", "Driver Error", "Quality Issue"],
-    note: "Lower is better. The ARC document says the quality-issue count is tracked by the Invoicing team. When an upload includes a quality flag such as Void Reason, the app counts populated values automatically; otherwise enter the issue rate manually.",
+    note: "Lower is better. This is not calculated from Active/Review/Final, QC, or Total Cycle Time uploads until a dedicated quality issue file is supplied.",
   },
   {
     label: "Quality Issues",
@@ -42,18 +41,18 @@ const METRICS: MetricDefinition[] = [
     source: "Same source used for Ticket Quality",
     formula: "Count rows flagged as billing/ticket quality issues.",
     columns: ["Void Reason", "Driver Error", "Quality Issue"],
-    note: "This is the numerator behind Ticket Quality and the Quality Issues dashboard count. The billing quality sheet remains the authoritative manual source when those columns are not in the upload.",
+    note: "This is the numerator behind Ticket Quality. Enter it manually until a dedicated quality issue file is supplied.",
   },
   {
     label: "Invoice Cycle Time (Final Edit to Invoice)",
     owner: "Invoicing",
     cadence: "Weekly",
     target: "<= 3 days",
-    source: "Total Tickets uploads filtered to Final Edit",
+    source: "Total Cycle Time uploads. The file name must include total cycle time.",
     formula:
-      "Business days from the oldest Deliver/Pickup date in Final Edit to the selected Effective to date (not today).",
-    columns: ["Status", "Deliver/Pickup"],
-    note: "This matches the TCR instructions: select Final Edit, sort by Deliver/Pickup, then count business days to the final date selected in the calendar. The current date is never used. Example: Jun 10 to Jun 17 is 5 business days.",
+      "Business days from the oldest Deliver/Pickup date in the file to today, excluding weekends.",
+    columns: ["Column J: Deliver/Pickup"],
+    note: "The app sorts Deliver/Pickup dates from oldest to newest, uses the oldest date, then counts business days through the current day.",
   },
   {
     label: "Team Responsiveness (within 1 hour)",
@@ -100,11 +99,11 @@ const METRICS: MetricDefinition[] = [
     owner: "Dispatch",
     cadence: "Current view",
     target: "No target",
-    source: "Total Tickets uploads",
+    source: "Active/Review/Final uploads. The file name must include active, review, and final.",
     formula:
-      "Count ticket Status values matching Active, Review, and Final Edit; codes A, R, and F are also recognized.",
-    columns: ["Status"],
-    note: "Active is Status A/Active, Review is Status R/Review, and Final Edit is Status F/Final Edit. The dashboard and analytics use those exact buckets from uploaded Total Tickets rows.",
+      "Count Status values in column F: A is Active, E or R is Review, and F is Final Edit.",
+    columns: ["Column F: Status"],
+    note: "The dashboard and analytics use only the Active/Review/Final source file for these status buckets.",
   },
 ];
 
@@ -119,8 +118,8 @@ export function MetricCalculationGuide() {
           </div>
           <p className="mt-2 text-sm text-muted-foreground">
             These definitions align the dashboard to the Performance Tracker. Automatic calculations
-            use the selected dashboard date range and the report type chosen during upload; each
-            manual KPI names the source fields still required for automation.
+            now use specific source files identified by file name; each manual KPI names the source
+            fields still required for automation.
           </p>
         </div>
         <div className="border-l-0 md:border-l md:pl-4">
@@ -129,8 +128,8 @@ export function MetricCalculationGuide() {
             <span className="text-sm font-medium">Upload rule</span>
           </div>
           <p className="mt-2 text-sm text-muted-foreground">
-            A file name does not determine the calculation. Choose Total Tickets or Total Invoiced
-            before uploading so its rows are stored in the correct calculation group.
+            The file name determines the calculation. Use names containing active review final, QC,
+            total cycle time, or open jobs; the selected report type must match the file name.
           </p>
         </div>
       </section>

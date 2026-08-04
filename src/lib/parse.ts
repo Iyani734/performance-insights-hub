@@ -71,10 +71,16 @@ export async function readWorkbook(file: File): Promise<XLSX.WorkBook> {
 export function parseTicketsSheet(wb: XLSX.WorkBook): { rows: ParsedTicket[]; stats: ParseStats } {
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const raw = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: null });
+  const cells = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1, defval: null });
   const stats: ParseStats = { source_rows: raw.length, sheet_rows: sheetRowCount(sheet), imported: 0, skipped: 0, errors: 0, error_details: [] };
   const rows: ParsedTicket[] = [];
   raw.forEach((r, i) => {
     try {
+      const rowCells = cells[i + 1] ?? [];
+      const rowRaw = { ...r };
+      if (!hasHeader(rowRaw, "Status") && rowCells[5] != null) rowRaw["Status"] = rowCells[5];
+      if (!hasHeader(rowRaw, "Deliver/Pickup") && rowCells[9] != null)
+        rowRaw["Deliver/Pickup"] = rowCells[9];
       const ticket_no = s(r["Ticket #"]) ?? s(r["TicketID"]);
       if (!ticket_no && !s(r["Job #"])) { stats.skipped++; return; }
       rows.push({
@@ -82,7 +88,7 @@ export function parseTicketsSheet(wb: XLSX.WorkBook): { rows: ParsedTicket[]; st
         ticket_id: s(r["TicketID"]),
         customer_id_ext: s(r["Customer ID"]),
         customer: s(r["Customer"]),
-        status: s(r["Status"]),
+        status: s(rowRaw["Status"]),
         order_type: s(r["OrderType"]),
         order_category: s(r["Order Category"]),
         job_no: s(r["Job #"]),
@@ -92,7 +98,7 @@ export function parseTicketsSheet(wb: XLSX.WorkBook): { rows: ParsedTicket[]; st
         date_recv: toISODate(r["Date Recv"]),
         final_edited_by: s(r["Final Edited By"]) ?? s(r["FinalEditedBy"]),
         void_reason: s(r["Void Reason"]),
-        raw: r,
+        raw: rowRaw,
       });
       stats.imported++;
     } catch (e: any) {
@@ -101,6 +107,18 @@ export function parseTicketsSheet(wb: XLSX.WorkBook): { rows: ParsedTicket[]; st
     }
   });
   return { rows, stats };
+}
+
+function hasHeader(row: Record<string, any>, header: string) {
+  const target = normalizeHeader(header);
+  return Object.keys(row).some((key) => normalizeHeader(key) === target);
+}
+
+function normalizeHeader(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
 }
 
 export type ParsedOpenJob = {

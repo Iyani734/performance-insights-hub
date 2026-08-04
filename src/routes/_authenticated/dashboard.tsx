@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/lib/useAuth";
 import { useDemoMode } from "@/lib/demoMode";
 import { isSeededDemoEmail, isSeededDemoNote, isSeededDemoSource, isSeededDemoUpload } from "@/lib/liveData";
+import { reportKindLabel } from "@/lib/reportTypes";
 import {
   DEMO_TARGETS,
   defaultLast7DaysRange,
@@ -204,8 +205,8 @@ function Dashboard() {
   const summary = useMemo(() => overallScore(rows), [rows]);
   const focus = useMemo(() => focusAreas(rows), [rows]);
 
-  const totals = autoQ.data?.totals ?? { tickets: 0, invoiced: 0, quality_issues: 0, voided: 0, active_tickets: 0, review_tickets: 0, final_edit_tickets: 0 };
-  const noData = !validRange || (totals.tickets === 0 && totals.invoiced === 0);
+  const totals = autoQ.data?.totals ?? { tickets: 0, invoiced: 0, quality_issues: 0, qc_tickets: 0, cycle_time_rows: 0, voided: 0, active_tickets: 0, review_tickets: 0, final_edit_tickets: 0 };
+  const noData = !validRange || (totals.tickets === 0 && totals.qc_tickets === 0 && totals.cycle_time_rows === 0 && totals.invoiced === 0);
 
   const [editingKpi, setEditingKpi] = useState<KpiTarget | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -275,7 +276,7 @@ function Dashboard() {
           <div className="text-sm">
             <div className="text-xs text-muted-foreground uppercase tracking-wide">Last Upload</div>
             <div className="mt-1 font-medium">{lastUploadQ.data ? new Date(lastUploadQ.data.created_at).toLocaleString() : "—"}</div>
-            <div className="text-xs text-muted-foreground mt-0.5">{lastUploadQ.data?.kind ?? "No uploads yet"}</div>
+            <div className="text-xs text-muted-foreground mt-0.5">{lastUploadQ.data ? reportKindLabel(lastUploadQ.data.kind) : "No uploads yet"}</div>
           </div>
           <div className="text-sm">
             <div className="text-xs text-muted-foreground uppercase tracking-wide flex items-center gap-1.5"><Mail className="w-3.5 h-3.5" />Customer Emails</div>
@@ -294,7 +295,7 @@ function Dashboard() {
             <AlertTriangle className="w-6 h-6 text-warning" />
             <div className="flex-1">
               <div className="font-medium">No data for this date range yet</div>
-              <div className="text-sm text-muted-foreground">Upload Total Tickets, Total Invoiced, or Open Jobs to populate KPIs.</div>
+              <div className="text-sm text-muted-foreground">Upload Active/Review/Final, Ticket QC, Total Cycle Time, or Open Jobs to populate KPIs.</div>
             </div>
             <Button onClick={() => nav({ to: "/uploads" })}>Go to Uploads</Button>
           </div>
@@ -306,7 +307,7 @@ function Dashboard() {
         <StatCard icon={Ticket} label="Active Tickets" value={totals.active_tickets} accent="text-primary" />
         <StatCard icon={Ticket} label="Review Tickets" value={totals.review_tickets} accent="text-warning" />
         <StatCard icon={CheckCircle2} label="Final Edit Tickets" value={totals.final_edit_tickets} accent="text-success" />
-        <StatCard icon={AlertTriangle} label="Quality Issues" value={totals.quality_issues} accent="text-warning" />
+        <StatCard icon={CheckCircle2} label="QC Tickets" value={totals.qc_tickets ?? 0} accent="text-success" />
       </div>
 
       {/* Operational Summary */}
@@ -431,7 +432,7 @@ function Dashboard() {
               <YAxis stroke="var(--muted-foreground)" fontSize={11} />
               <Tooltip contentStyle={{ borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }} />
               <Legend />
-              <Line type="monotone" dataKey="Review→Final Edit %" stroke="oklch(0.62 0.13 190)" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="Review-Final QC" stroke="oklch(0.62 0.13 190)" strokeWidth={2} dot={false} />
               <Line type="monotone" dataKey="Ticket Quality %" stroke="oklch(0.78 0.16 75)" strokeWidth={2} dot={false} />
               <Line type="monotone" dataKey="Invoice Cycle (d)" stroke="oklch(0.6 0.22 25)" strokeWidth={2} dot={false} />
             </LineChart>
@@ -491,7 +492,7 @@ function trendChart(rows: any[]) {
   for (const r of rows) {
     const w = formatWeek(r.week_start);
     byWeek[w] = byWeek[w] ?? { week: w };
-    if (r.kpi_key === "review_to_final_edit") byWeek[w]["Review→Final Edit %"] = Number(r.actual);
+    if (r.kpi_key === "review_to_final_edit") byWeek[w]["Review-Final QC"] = Number(r.actual);
     if (r.kpi_key === "ticket_quality") byWeek[w]["Ticket Quality %"] = Number(r.actual);
     if (r.kpi_key === "invoice_cycle_time") byWeek[w]["Invoice Cycle (d)"] = Number(r.actual);
   }

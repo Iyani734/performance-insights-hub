@@ -40,30 +40,30 @@ import { useAuth } from "@/lib/useAuth";
 import { useDemoMode } from "@/lib/demoMode";
 import { isSeededDemoUpload } from "@/lib/liveData";
 import {
-  calculateInvoiceCycleTime,
-  calculateReviewToFinalEdit,
-  calculateTicketQuality,
+  calculateTotalCycleTime,
   hasValue,
   isFinalEditTicket,
   normalizeTicketStatus,
 } from "@/lib/kpiRules";
 import {
+  identifyReportKindFromFileName,
+  REPORT_KINDS,
+  reportKindHint,
+  reportKindLabel,
+  type ReportKind,
+} from "@/lib/reportTypes";
+import {
   defaultLast7DaysRange,
   demoUploads,
   loadDemoLocalUploads,
   saveDemoLocalUploads,
-  type DemoUploadKind,
   type DemoUploadMetrics,
   type DemoUploadRecord,
 } from "@/lib/demoData";
 
 export const Route = createFileRoute("/_authenticated/uploads")({ component: UploadsPage });
 
-const KINDS = [
-  { value: "total_tickets", label: "Total Tickets" },
-  { value: "total_invoiced", label: "Total Invoiced" },
-  { value: "open_jobs", label: "Open Jobs" },
-] as const;
+const KINDS = REPORT_KINDS;
 const DEMO_UPLOADERS = ["Ian", "Yvette"];
 const INSERT_CONCURRENCY = 3;
 
@@ -84,39 +84,34 @@ async function insertBatches<T>(rows: T[], insert: (batch: T[]) => Promise<void>
 }
 
 function buildDemoUploadMetrics(
-  kind: DemoUploadKind,
+  kind: ReportKind,
   rows: any[],
-  effectiveFrom: string,
-  effectiveTo: string,
+  _effectiveFrom: string,
+  _effectiveTo: string,
 ): DemoUploadMetrics | undefined {
   if (kind === "open_jobs") return undefined;
-  const completedRows = rows.filter(
-    (row) => !row.void_reason || String(row.void_reason).trim() === "",
-  );
-  if (kind === "total_tickets") {
+  if (kind === "active_review_final") {
     const statusRows = rows.map((row) => normalizeTicketStatus(row.status));
-    const quality = calculateTicketQuality([], rows);
     return {
       tickets: rows.length,
       finalEdited: rows.some((row) => isFinalEditTicket(row))
         ? rows.filter((row) => isFinalEditTicket(row)).length
         : rows.filter((row) => hasValue(row.final_edited_by)).length,
-      ticketVoids: rows.length - completedRows.length,
+      ticketVoids: rows.filter((row) => hasValue(row.void_reason)).length,
       activeTickets: statusRows.filter((status) => status === "active").length,
       reviewTickets: statusRows.filter((status) => status === "review").length,
       finalEditTickets: statusRows.filter((status) => status === "final edit").length,
-      reviewToFinalEdit: calculateReviewToFinalEdit(rows, effectiveFrom, effectiveTo),
-      ticketQuality: quality.actual,
-      qualityIssues: quality.issues,
-      invoiceCycleTime: calculateInvoiceCycleTime(rows, effectiveTo),
     };
   }
-  const quality = calculateTicketQuality(rows, []);
+  if (kind === "ticket_qc") {
+    return {
+      qcTickets: rows.length,
+      reviewToFinalEdit: rows.length,
+    };
+  }
   return {
     invoiced: rows.length,
-    invoiceQualityIssues: quality.issues,
-    ticketQuality: quality.actual,
-    qualityIssues: quality.issues,
+    invoiceCycleTime: calculateTotalCycleTime(rows),
   };
 }
 
@@ -126,7 +121,7 @@ function UploadsPage() {
   const demoMode = useDemoMode();
   const isAdmin = isSuperAdmin || role === "admin";
   const defaultRange = defaultLast7DaysRange();
-  const [kind, setKind] = useState<DemoUploadKind>("total_tickets");
+  const [kind, setKind] = useState<ReportKind>("active_review_final");
   const [effectiveFrom, setEffectiveFrom] = useState<string>(defaultRange.from);
   const [effectiveTo, setEffectiveTo] = useState<string>(defaultRange.to);
   const [file, setFile] = useState<File | null>(null);
@@ -194,6 +189,17 @@ function UploadsPage() {
     mutationFn: async (selectedFile: File | null) => {
       if (!selectedFile) throw new Error("Choose an Excel file before uploading.");
       if (!isExcelFile(selectedFile)) throw new Error("Upload a .xlsx or .xls file.");
+      const inferredKind = identifyReportKindFromFileName(selectedFile.name);
+      if (!inferredKind) {
+        throw new Error(
+          "The file name must include active review final, QC, total cycle time, or open jobs.",
+        );
+      }
+      if (inferredKind !== kind) {
+        throw new Error(
+          `This file name matches ${reportKindLabel(inferredKind)}. Select ${reportKindLabel(inferredKind)} or rename the file.`,
+        );
+      }
       const t0 = performance.now();
       setUploadStage("Reading spreadsheet...");
       const workbookPromise = readWorkbook(selectedFile);
@@ -246,7 +252,7 @@ function UploadsPage() {
       const { data: up, error: reportError } = await supabase
         .from("report_uploads")
         .insert({
-          kind,
+          kind: kind as any,
           week_start: uploadBucket,
           file_name: selectedFile.name,
           uploaded_by: user.id,
@@ -264,8 +270,8 @@ function UploadsPage() {
       }
       let stats;
       try {
+        stats = parsed.stats;
         if (kind === "open_jobs") {
-          stats = parsed.stats;
           const payload = parsed.rows.map((r) => ({
             ...r,
             upload_id: up.id,
@@ -276,9 +282,8 @@ function UploadsPage() {
             const { error } = await supabase.from("open_jobs").insert(batch as any);
             if (error) throw error;
           });
-        } else {
-          stats = parsed.stats;
-          const tKind = kind === "total_tickets" ? "tickets" : "invoiced";
+        } else if (kind !== "ticket_qc") {
+          const tKind = kind === "active_review_final" ? "tickets" : "invoiced";
           const payload = parsed.rows.map((r) => ({
             ...r,
             upload_id: up.id,
@@ -291,39 +296,10 @@ function UploadsPage() {
             const { error } = await supabase.from("tickets").insert(batch as any);
             if (error) throw error;
           });
-          setUploadStage("Calculating dashboard metrics...");
-          const { computeAutoKpisForRange } = await import("@/lib/kpi");
-          const auto = await computeAutoKpisForRange(effectiveFrom, effectiveTo);
-          const upserts = [
-            { kpi_key: "review_to_final_edit", actual: auto.review_to_final_edit },
-            { kpi_key: "ticket_quality", actual: auto.ticket_quality },
-            { kpi_key: "invoice_cycle_time", actual: auto.invoice_cycle_time },
-          ]
-            .filter((v) => v.actual != null)
-            .map((v) => ({ ...v, week_start: uploadBucket, source: "auto", entered_by: user.id }));
-          const kpiWrite = upserts.length
-            ? Promise.resolve(
-                supabase.from("kpi_values").upsert(upserts, { onConflict: "kpi_key,week_start" }),
-              )
-            : Promise.resolve({ error: null });
-          const dt = Math.round(performance.now() - t0);
-          const reportWrite = supabase
-            .from("report_uploads")
-            .update({
-              row_count: stats.imported,
-              rows_skipped: stats.skipped,
-              errors_count: stats.errors,
-              processing_ms: dt,
-              error_details: stats.error_details as any,
-              status: stats.errors > 0 ? "partial" : "success",
-            })
-            .eq("id", up.id);
-          const [kpiResult, reportResult] = await Promise.all([kpiWrite, reportWrite]);
-          if (kpiResult.error) throw kpiResult.error;
-          if (reportResult.error) throw reportResult.error;
-          return { stats };
         }
+
         const dt = Math.round(performance.now() - t0);
+        setUploadStage("Saving upload results...");
         const reportWrite = supabase
           .from("report_uploads")
           .update({
@@ -337,6 +313,25 @@ function UploadsPage() {
           .eq("id", up.id);
         const { error: reportUpdateError } = await reportWrite;
         if (reportUpdateError) throw reportUpdateError;
+
+        if (kind !== "open_jobs") {
+          setUploadStage("Calculating dashboard metrics...");
+          const { computeAutoKpisForRange } = await import("@/lib/kpi");
+          const auto = await computeAutoKpisForRange(effectiveFrom, effectiveTo);
+          const upserts = [
+            { kpi_key: "review_to_final_edit", actual: auto.review_to_final_edit },
+            { kpi_key: "ticket_quality", actual: auto.ticket_quality },
+            { kpi_key: "invoice_cycle_time", actual: auto.invoice_cycle_time },
+          ]
+            .filter((v) => v.actual != null)
+            .map((v) => ({ ...v, week_start: uploadBucket, source: "auto", entered_by: user.id }));
+          if (upserts.length) {
+            const { error: kpiError } = await supabase
+              .from("kpi_values")
+              .upsert(upserts, { onConflict: "kpi_key,week_start" });
+            if (kpiError) throw kpiError;
+          }
+        }
         return { stats };
       } catch (error: any) {
         const reason = error?.message ?? "Upload processing failed";
@@ -476,7 +471,7 @@ function UploadsPage() {
       <header>
         <h1 className="font-display text-3xl font-semibold">Report Uploads</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Upload Total Tickets, Total Invoiced, or Open Jobs exports.
+          Upload Active/Review/Final, Ticket QC, Total Cycle Time, or Open Jobs exports.
         </p>
       </header>
 
@@ -496,6 +491,7 @@ function UploadsPage() {
                 ))}
               </SelectContent>
             </Select>
+            <p className="text-xs text-muted-foreground">{reportKindHint(kind)}</p>
           </div>
           <div className="space-y-2">
             <Label>Effective from</Label>
@@ -522,8 +518,8 @@ function UploadsPage() {
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
             />
             <p className="text-xs text-muted-foreground">
-              Pick the date range this file's data actually covers. The header row is not counted as
-              imported data.
+              Pick the date range this file's data covers. The header row is not counted as imported
+              data.
             </p>
             {fileError && <p className="text-xs text-destructive">{fileError}</p>}
           </div>
@@ -646,7 +642,7 @@ function UploadsPage() {
                     <td className="px-4 py-2.5">
                       <span className="inline-flex items-center gap-1.5">
                         <FileSpreadsheet className="w-4 h-4 text-primary" />
-                        {KINDS.find((k) => k.value === u.kind)?.label ?? u.kind}
+                        {reportKindLabel(u.kind)}
                       </span>
                     </td>
                     <td className="px-4 py-2.5 whitespace-nowrap">{formatWeek(u.week_start)}</td>

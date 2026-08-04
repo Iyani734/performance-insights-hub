@@ -54,8 +54,8 @@ export function normalizeTicketStatus(status: unknown) {
   const compact = value.replace(/[\s_-]+/g, "");
 
   if (compact === "a" || compact === "active") return "active";
-  if (compact === "r" || compact === "review") return "review";
-  if (compact === "f" || compact === "finaledit" || compact === "finaledited") return "final edit";
+  if (compact === "e" || compact === "r" || compact === "review") return "review";
+  if (compact === "f" || compact === "final" || compact === "finaledit" || compact === "finaledited") return "final edit";
   if (compact === "i" || compact === "invoiced" || compact === "invoice") return "invoiced";
   if (compact === "v" || compact === "void" || compact === "voided") return "voided";
 
@@ -147,6 +147,23 @@ export function calculateInvoiceCycleTime(tickets: TicketLike[], effectiveToIso:
   );
 
   return businessDaysBetween(oldestDeliverPickup, effectiveTo);
+}
+
+export function calculateTotalCycleTime(tickets: TicketLike[], throughDate = new Date()) {
+  const oldestDeliverPickup = oldestDeliverPickupDate(tickets);
+  if (!oldestDeliverPickup) return null;
+  return businessDaysBetween(oldestDeliverPickup, throughDate);
+}
+
+export function oldestDeliverPickupDate(tickets: TicketLike[]) {
+  const deliverDates = tickets
+    .map((row) => deliverPickupDateFromRow(row))
+    .filter((date): date is Date => !!date && Number.isFinite(date.getTime()));
+
+  if (!deliverDates.length) return null;
+  return deliverDates.reduce((oldest, date) =>
+    date.getTime() < oldest.getTime() ? date : oldest,
+  );
 }
 
 export function calculateTicketQuality(

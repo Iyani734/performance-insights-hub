@@ -11,8 +11,9 @@ import { TrendingUp, TrendingDown, Minus, BarChart3, Grid3x3, Sparkles } from "l
 import { DateRangeSelect, type DateRange } from "@/components/DateRangeSelect";
 import { useDemoMode } from "@/lib/demoMode";
 import { addDays, DEMO_TARGETS, DEMO_WEEKS, demoAutoKpisForRange, demoKpiValues } from "@/lib/demoData";
-import { isSeededDemoPayload, isSeededDemoSource } from "@/lib/liveData";
+import { isSeededDemoPayload, isSeededDemoSource, isSeededDemoUpload } from "@/lib/liveData";
 import { normalizeTicketStatus } from "@/lib/kpiRules";
+import { isActiveReviewFinalUpload } from "@/lib/reportTypes";
 
 export const Route = createFileRoute("/_authenticated/analytics")({ component: AnalyticsPage });
 
@@ -95,9 +96,21 @@ function AnalyticsPage() {
     queryKey: ["ticket_status_counts", demoMode],
     queryFn: async () => {
       if (demoMode) return demoTicketStatusRows();
+      const { data: uploads } = await supabase
+        .from("report_uploads")
+        .select("id,kind,file_name,status")
+        .order("created_at", { ascending: false })
+        .limit(1000);
+      const uploadIds = (uploads ?? [])
+        .filter((upload) => !isSeededDemoUpload(upload.file_name))
+        .filter((upload) => upload.status !== "failed" && upload.status !== "processing")
+        .filter(isActiveReviewFinalUpload)
+        .map((upload) => upload.id);
+      if (!uploadIds.length) return [];
       const { data } = await supabase
         .from("tickets")
         .select("week_start,status,raw")
+        .in("upload_id", uploadIds)
         .eq("kind", "tickets")
         .order("week_start");
       return buildTicketStatusRows((data ?? []).filter((row) => !isSeededDemoPayload(row.raw)));
@@ -231,7 +244,7 @@ function AnalyticsPage() {
                   <h2 className="font-display text-base font-semibold flex items-center gap-2">
                     <BarChart3 className="w-4 h-4" />Ticket Status Snapshot
                   </h2>
-                  <p className="text-xs text-muted-foreground">Counts from the Total Tickets Status column: A/Active, R/Review, and F/Final Edit.</p>
+                  <p className="text-xs text-muted-foreground">Counts from the Active/Review/Final Status column: A = Active, E/R = Review, and F = Final Edit.</p>
                 </div>
                 <div className="text-xs text-muted-foreground">Selected date window</div>
               </div>

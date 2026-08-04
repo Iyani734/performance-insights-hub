@@ -603,7 +603,13 @@ export type Database = {
     }
     Enums: {
       app_role: "admin" | "user" | "super_admin"
-      report_kind: "total_tickets" | "total_invoiced" | "open_jobs"
+      report_kind:
+        | "total_tickets"
+        | "total_invoiced"
+        | "active_review_final"
+        | "ticket_qc"
+        | "total_cycle_time"
+        | "open_jobs"
       ticket_kind: "tickets" | "invoiced"
     }
     CompositeTypes: {
@@ -733,7 +739,14 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["admin", "user", "super_admin"],
-      report_kind: ["total_tickets", "total_invoiced", "open_jobs"],
+      report_kind: [
+        "total_tickets",
+        "total_invoiced",
+        "active_review_final",
+        "ticket_qc",
+        "total_cycle_time",
+        "open_jobs",
+      ],
       ticket_kind: ["tickets", "invoiced"],
     },
   },
