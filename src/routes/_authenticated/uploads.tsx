@@ -60,6 +60,7 @@ import {
   type DemoUploadMetrics,
   type DemoUploadRecord,
 } from "@/lib/demoData";
+import { syncOpenJobCustomers } from "@/lib/customerSync";
 
 export const Route = createFileRoute("/_authenticated/uploads")({ component: UploadsPage });
 
@@ -282,20 +283,33 @@ function UploadsPage() {
             const { error } = await supabase.from("open_jobs").insert(batch as any);
             if (error) throw error;
           });
-          const customers = Array.from(
-            parsed.rows.reduce((map, row) => {
-              if (row.customer_key && row.customer_name) {
-                map.set(row.customer_key, row.customer_name);
+          const customerPairs = parsed.rows.reduce((map, row) => {
+            if (row.customer_key && row.customer_name) {
+              map.set(row.customer_key, row.customer_name);
+            }
+            return map;
+          }, new Map<string, string>());
+          if (customerPairs.size) {
+            setUploadStage(`Updating ${customerPairs.size} customers...`);
+            try {
+              await syncOpenJobCustomers({ data: { uploadId: up.id } });
+            } catch (serverSyncError: any) {
+              const customers = Array.from(customerPairs, ([key, name]) => ({
+                key,
+                name,
+                updated_at: new Date().toISOString(),
+              }));
+              const { error } = await supabase
+                .from("customers")
+                .upsert(customers, { onConflict: "key" });
+              if (error) {
+                throw new Error(
+                  `Open Jobs were imported but customer sync failed: ${
+                    serverSyncError?.message ?? "server sync failed"
+                  }. Fallback also failed: ${error.message}`,
+                );
               }
-              return map;
-            }, new Map<string, string>()),
-          ).map(([key, name]) => ({ key, name, updated_at: new Date().toISOString() }));
-          if (customers.length) {
-            setUploadStage(`Updating ${customers.length} customers...`);
-            const { error } = await supabase
-              .from("customers")
-              .upsert(customers, { onConflict: "key" });
-            if (error) throw error;
+            }
           }
         } else if (kind !== "ticket_qc") {
           const tKind = kind === "active_review_final" ? "tickets" : "invoiced";
