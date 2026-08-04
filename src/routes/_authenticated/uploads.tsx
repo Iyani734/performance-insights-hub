@@ -60,7 +60,6 @@ import {
   type DemoUploadMetrics,
   type DemoUploadRecord,
 } from "@/lib/demoData";
-import { syncOpenJobCustomers } from "@/lib/customerSync";
 
 export const Route = createFileRoute("/_authenticated/uploads")({ component: UploadsPage });
 
@@ -270,6 +269,7 @@ function UploadsPage() {
         throw reportError ?? new Error("Could not create the upload record.");
       }
       let stats;
+      let customerSyncWarning: string | null = null;
       try {
         stats = parsed.stats;
         if (kind === "open_jobs") {
@@ -291,9 +291,10 @@ function UploadsPage() {
           }, new Map<string, string>());
           if (customerPairs.size) {
             setUploadStage(`Updating ${customerPairs.size} customers...`);
-            try {
-              await syncOpenJobCustomers({ data: { uploadId: up.id } });
-            } catch (serverSyncError: any) {
+            const { error: syncError } = await supabase.rpc("sync_customers_from_open_jobs_upload", {
+              p_upload_id: up.id,
+            });
+            if (syncError) {
               const customers = Array.from(customerPairs, ([key, name]) => ({
                 key,
                 name,
@@ -303,11 +304,11 @@ function UploadsPage() {
                 .from("customers")
                 .upsert(customers, { onConflict: "key" });
               if (error) {
-                throw new Error(
-                  `Open Jobs were imported but customer sync failed: ${
-                    serverSyncError?.message ?? "server sync failed"
-                  }. Fallback also failed: ${error.message}`,
+                customerSyncWarning = (
+                  "Open Jobs imported, but customers were not synced yet. Apply the Supabase migration " +
+                  "20260804154500_open_jobs_customer_sync_rpc.sql, then upload again or run the sync RPC."
                 );
+                console.warn("Open Jobs customer sync failed", { syncError, fallbackError: error });
               }
             }
           }
@@ -361,7 +362,7 @@ function UploadsPage() {
             if (kpiError) throw kpiError;
           }
         }
-        return { stats };
+        return { stats, customerSyncWarning };
       } catch (error: any) {
         const reason = error?.message ?? "Upload processing failed";
         const details = [...(stats?.error_details ?? []), { row: 0, reason }];
@@ -382,7 +383,7 @@ function UploadsPage() {
         throw error;
       }
     },
-    onSuccess: ({ stats: s, demoUpload }) => {
+    onSuccess: ({ stats: s, demoUpload, customerSyncWarning }) => {
       if (demoUpload) {
         setDemoUploadedRows((prev) => {
           const next = [demoUpload, ...prev].slice(0, 25);
@@ -399,6 +400,7 @@ function UploadsPage() {
           ? `${s.imported} data rows imported${workbookRows}`
           : `${s.source_rows} data rows found; ${s.imported} imported${s.skipped ? `, ${s.skipped} skipped` : ""}${s.errors ? `, ${s.errors} errors` : ""}${workbookRows}`;
       toast.success(rowSummary);
+      if (customerSyncWarning) toast.warning(customerSyncWarning);
       setUploadStage("");
       setFile(null);
       setFileInputKey((v) => v + 1);

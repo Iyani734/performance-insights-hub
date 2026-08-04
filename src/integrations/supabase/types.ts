@@ -606,6 +606,10 @@ export type Database = {
         Returns: boolean
       }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
+      sync_customers_from_open_jobs_upload: {
+        Args: { p_upload_id: string }
+        Returns: number
+      }
     }
     Enums: {
       app_role: "admin" | "user" | "super_admin"
