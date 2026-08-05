@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { computeAutoKpisForRange, formatKpi, formatWeek, type KpiTarget } from "@/lib/kpi";
+import { computeAutoKpisForRange, computeStatus, formatKpi, formatWeek, normalizeKpiTargets, type KpiTarget } from "@/lib/kpi";
 import { buildRows, overallScore, deltaPct, isImproving, commentary, focusAreas } from "@/lib/summary";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -99,7 +99,7 @@ function Dashboard() {
 
   const targetsQ = useQuery({
     queryKey: ["kpi_targets", demoMode],
-    queryFn: async () => demoMode ? DEMO_TARGETS : ((await supabase.from("kpi_targets").select("*").order("sort_order")).data ?? []) as KpiTarget[],
+    queryFn: async () => demoMode ? DEMO_TARGETS : normalizeKpiTargets(((await supabase.from("kpi_targets").select("*").order("sort_order")).data ?? []) as KpiTarget[]),
   });
 
   const autoQ = useQuery({
@@ -205,8 +205,9 @@ function Dashboard() {
   const summary = useMemo(() => overallScore(rows), [rows]);
   const focus = useMemo(() => focusAreas(rows), [rows]);
 
-  const totals = autoQ.data?.totals ?? { tickets: 0, invoiced: 0, quality_issues: 0, qc_tickets: 0, cycle_time_rows: 0, voided: 0, active_tickets: 0, review_tickets: 0, final_edit_tickets: 0 };
+  const totals = autoQ.data?.totals ?? { tickets: 0, invoiced: 0, quality_issues: 0, qc_tickets: 0, qc_review_tickets: 0, qc_final_tickets: 0, cycle_time_rows: 0, voided: 0, active_tickets: 0, review_tickets: 0, final_edit_tickets: 0 };
   const noData = !validRange || (totals.tickets === 0 && totals.qc_tickets === 0 && totals.cycle_time_rows === 0 && totals.invoiced === 0);
+  const ticketQcTarget = targets.find((target) => target.kpi_key === "review_to_final_edit") ?? null;
 
   const [editingKpi, setEditingKpi] = useState<KpiTarget | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -307,7 +308,12 @@ function Dashboard() {
         <StatCard icon={Ticket} label="Active Tickets" value={totals.active_tickets} accent="text-primary" />
         <StatCard icon={Ticket} label="Review Tickets" value={totals.review_tickets} accent="text-warning" />
         <StatCard icon={CheckCircle2} label="Final Edit Tickets" value={totals.final_edit_tickets} accent="text-success" />
-        <StatCard icon={CheckCircle2} label="QC Tickets" value={totals.qc_tickets ?? 0} accent="text-success" />
+        <TicketQcStatCard
+          target={ticketQcTarget}
+          actual={currentMap.review_to_final_edit}
+          reviewRows={totals.qc_review_tickets ?? 0}
+          finalRows={totals.qc_final_tickets ?? totals.qc_tickets ?? 0}
+        />
       </div>
 
       {/* Operational Summary */}
@@ -482,6 +488,43 @@ function StatCard({ icon: Icon, label, value, accent }: { icon: any; label: stri
           <div className="text-3xl font-display font-semibold mt-1">{value.toLocaleString()}</div>
         </div>
         <div className={`w-10 h-10 rounded-lg bg-muted flex items-center justify-center ${accent}`}><Icon className="w-5 h-5" /></div>
+      </div>
+    </Card>
+  );
+}
+
+function TicketQcStatCard({
+  target,
+  actual,
+  reviewRows,
+  finalRows,
+}: {
+  target: KpiTarget | null;
+  actual: number | null | undefined;
+  reviewRows: number;
+  finalRows: number;
+}) {
+  const value = target ? formatKpi(actual, target) : actual != null ? `${Number(actual).toFixed(1)}%` : "â€”";
+  const status = target ? computeStatus(actual, target) : "none";
+  return (
+    <Card className="p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs text-muted-foreground uppercase tracking-wide">Ticket QC</div>
+          <div className="text-3xl font-display font-semibold mt-1">{value}</div>
+          <div className="mt-2 text-xs text-muted-foreground">
+            Target: <span className="font-semibold text-foreground">{target?.target_display ?? ">= 95%"}</span>
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            Final {finalRows.toLocaleString()} / Review {reviewRows.toLocaleString()} x 100
+          </div>
+        </div>
+        <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center text-success">
+          <CheckCircle2 className="w-5 h-5" />
+        </div>
+      </div>
+      <div className="mt-3">
+        <StatusPill status={status} />
       </div>
     </Card>
   );

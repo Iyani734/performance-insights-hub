@@ -41,7 +41,7 @@ export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server
         ...(!SUPABASE_URL ? ['SUPABASE_URL'] : []),
         ...(!SUPABASE_PUBLISHABLE_KEY ? ['SUPABASE_PUBLISHABLE_KEY'] : []),
       ];
-      const message = `Missing Supabase environment variable(s): ${missing.join(', ')}. Add them to your server or Cloudflare deployment environment variables.`;
+      const message = `Missing Supabase environment variable(s): ${missing.join(', ')}. Add them to your hosting provider or server environment variables.`;
       console.error(`[Supabase] ${message}`);
       throw new Error(message);
     }

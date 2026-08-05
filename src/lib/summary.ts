@@ -1,5 +1,5 @@
 import type { KpiTarget, KpiStatus } from "./kpi";
-import { computeStatus } from "./kpi";
+import { computeStatus, normalizeKpiTarget } from "./kpi";
 
 export type KpiRow = {
   target: KpiTarget;
@@ -10,12 +10,13 @@ export type KpiRow = {
 
 export function buildRows(targets: KpiTarget[], current: Record<string, number | null>, previous: Record<string, number | null>): KpiRow[] {
   return targets.map(t => {
+    const target = normalizeKpiTarget(t);
     const actual = current[t.kpi_key] ?? null;
     return {
-      target: t,
+      target,
       actual,
       previous: previous[t.kpi_key] ?? null,
-      status: computeStatus(actual, t),
+      status: computeStatus(actual, target),
     };
   });
 }

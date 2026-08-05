@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Area, AreaChart, Bar, BarChart, Legend } from "recharts";
-import { computeStatus, formatKpi, formatWeek, type KpiTarget, type KpiStatus } from "@/lib/kpi";
+import { computeStatus, formatKpi, formatWeek, normalizeKpiTargets, type KpiTarget, type KpiStatus } from "@/lib/kpi";
 import { StatusPill } from "@/components/StatusPill";
 import { cn } from "@/lib/utils";
 import { TrendingUp, TrendingDown, Minus, BarChart3, Grid3x3, Sparkles } from "lucide-react";
@@ -81,7 +81,7 @@ function AnalyticsPage() {
 
   const targetsQ = useQuery({
     queryKey: ["kpi_targets", demoMode],
-    queryFn: async () => demoMode ? DEMO_TARGETS : ((await supabase.from("kpi_targets").select("*").order("sort_order")).data ?? []) as KpiTarget[],
+    queryFn: async () => demoMode ? DEMO_TARGETS : normalizeKpiTargets(((await supabase.from("kpi_targets").select("*").order("sort_order")).data ?? []) as KpiTarget[]),
   });
 
   const valuesQ = useQuery({

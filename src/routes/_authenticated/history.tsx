@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { computeStatus, formatKpi, formatWeek, type KpiTarget } from "@/lib/kpi";
+import { computeStatus, formatKpi, formatWeek, normalizeKpiTargets, type KpiTarget } from "@/lib/kpi";
 import { deltaPct } from "@/lib/summary";
 import { StatusPill } from "@/components/StatusPill";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
@@ -43,7 +43,7 @@ function HistoryPage() {
 
   const targetsQ = useQuery({
     queryKey: ["kpi_targets", demoMode],
-    queryFn: async () => demoMode ? DEMO_TARGETS : ((await supabase.from("kpi_targets").select("*").order("sort_order")).data ?? []) as KpiTarget[],
+    queryFn: async () => demoMode ? DEMO_TARGETS : normalizeKpiTargets(((await supabase.from("kpi_targets").select("*").order("sort_order")).data ?? []) as KpiTarget[]),
   });
 
   const valuesQ = useQuery({

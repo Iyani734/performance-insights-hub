@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { useAuth, DEFAULT_PAGES } from "@/lib/useAuth";
-import type { KpiTarget } from "@/lib/kpi";
+import { normalizeKpiTargets, type KpiTarget } from "@/lib/kpi";
 import { useState, useEffect, useMemo } from "react";
 import { Link, Navigate, Outlet, useLocation } from "@tanstack/react-router";
 import { Check, X, ShieldCheck, PencilLine, Send, Clock, CheckCircle2, XCircle, Eye, Edit3, BookOpen } from "lucide-react";
@@ -40,7 +40,7 @@ function SettingsPage() {
 
   const targetsQ = useQuery({
     queryKey: ["kpi_targets"],
-    queryFn: async () => ((await supabase.from("kpi_targets").select("*").order("sort_order")).data ?? []) as KpiTarget[],
+    queryFn: async () => normalizeKpiTargets(((await supabase.from("kpi_targets").select("*").order("sort_order")).data ?? []) as KpiTarget[]),
   });
   const [drafts, setDrafts] = useState<Record<string, KpiTarget>>({});
 
@@ -103,6 +103,7 @@ function SettingsPage() {
     mutationFn: async (t: KpiTarget) => {
       const patch = {
         label: t.label, owner: t.owner, cadence: t.cadence,
+        unit: t.unit,
         green_min: t.green_min, yellow_min: t.yellow_min,
         target_display: t.target_display, direction: t.direction,
       };

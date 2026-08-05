@@ -335,7 +335,7 @@ function EmailsPage() {
         <div className="text-sm">
           <div className="font-medium">Resend sending enabled</div>
           <div className="text-muted-foreground">
-            Configure RESEND_API_KEY and RESEND_FROM_EMAIL in Cloudflare. Bulk Send only sends
+            Configure RESEND_API_KEY and RESEND_FROM_EMAIL in your hosting provider. Bulk Send only sends
             customers that do not already have a Sent log for this week.
           </div>
         </div>

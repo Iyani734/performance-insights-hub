@@ -32,23 +32,43 @@ export type KpiTarget = {
 export type KpiStatus = "green" | "yellow" | "red" | "none";
 
 export function computeStatus(actual: number | null | undefined, t: KpiTarget): KpiStatus {
+  const target = normalizeKpiTarget(t);
   if (actual == null || Number.isNaN(actual)) return "none";
-  if (t.direction === "higher_is_better") {
-    if (actual >= t.green_min) return "green";
-    if (actual >= t.yellow_min) return "yellow";
+  if (target.direction === "higher_is_better") {
+    if (actual >= target.green_min) return "green";
+    if (actual >= target.yellow_min) return "yellow";
     return "red";
   }
   // lower_is_better
-  if (actual <= t.green_min) return "green";
-  if (actual <= t.yellow_min) return "yellow";
+  if (actual <= target.green_min) return "green";
+  if (actual <= target.yellow_min) return "yellow";
   return "red";
 }
 
 export function formatKpi(actual: number | null | undefined, t: KpiTarget): string {
+  const target = normalizeKpiTarget(t);
   if (actual == null || Number.isNaN(actual)) return "—";
-  const digits = t.unit === "count" ? 0 : 1;
+  const digits = target.unit === "count" ? 0 : 1;
   const n = Number(actual).toFixed(digits);
-  return t.unit === "%" ? `${n}%` : t.unit === "days" ? `${n} d` : n;
+  return target.unit === "%" ? `${n}%` : target.unit === "days" ? `${n} d` : n;
+}
+
+export function normalizeKpiTarget(target: KpiTarget): KpiTarget {
+  if (target.kpi_key !== "review_to_final_edit") return target;
+  return {
+    ...target,
+    label: "Tickets QC'd - Review to Final Edit",
+    unit: "%",
+    direction: "higher_is_better",
+    green_min: 95,
+    yellow_min: 85,
+    target_display: ">= 95%",
+    auto: true,
+  };
+}
+
+export function normalizeKpiTargets(targets: KpiTarget[]) {
+  return targets.map(normalizeKpiTarget);
 }
 
 // ISO week Monday
