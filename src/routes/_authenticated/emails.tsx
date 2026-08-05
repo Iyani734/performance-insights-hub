@@ -25,6 +25,7 @@ import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_WEEKS, demoCustomers, demoEmailJobs, demoOpenJobs } from "@/lib/demoData";
 import { isSeededDemoEmail, isSeededDemoPayload } from "@/lib/liveData";
 import { sendOpenJobsEmails } from "@/lib/emailSend";
+import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
 
 export const Route = createFileRoute("/_authenticated/emails")({ component: EmailsPage });
 
@@ -52,13 +53,16 @@ function EmailsPage() {
     queryKey: ["oj_weeks", demoMode],
     queryFn: async () => {
       if (demoMode) return DEMO_WEEKS;
-      const { data } = await supabase
-        .from("open_jobs")
-        .select("week_start,details")
-        .order("week_start", { ascending: false });
+      const data = await fetchAllSupabaseRows<any>((from, to) =>
+        supabase
+          .from("open_jobs")
+          .select("week_start,details")
+          .order("week_start", { ascending: false })
+          .range(from, to),
+      );
       return Array.from(
         new Set(
-          (data ?? [])
+          data
             .filter((row) => !isSeededDemoPayload(row.details))
             .map((r: any) => r.week_start as string),
         ),
@@ -73,8 +77,10 @@ function EmailsPage() {
     queryFn: async () => {
       if (!w) return [];
       if (demoMode) return demoOpenJobs(w);
-      const { data } = await supabase.from("open_jobs").select("*").eq("week_start", w);
-      return (data ?? []).filter((row) => !isSeededDemoPayload(row.details));
+      const data = await fetchAllSupabaseRows<any>((from, to) =>
+        supabase.from("open_jobs").select("*").eq("week_start", w).range(from, to),
+      );
+      return data.filter((row) => !isSeededDemoPayload(row.details));
     },
     enabled: !!w,
   });
@@ -83,8 +89,10 @@ function EmailsPage() {
     queryKey: ["customers", demoMode],
     queryFn: async () => {
       if (demoMode) return demoCustomers();
-      const { data } = await supabase.from("customers").select("*");
-      return (data ?? []).filter((row) => !isSeededDemoEmail(row.email));
+      const data = await fetchAllSupabaseRows<any>((from, to) =>
+        supabase.from("customers").select("*").range(from, to),
+      );
+      return data.filter((row) => !isSeededDemoEmail(row.email));
     },
   });
 
@@ -93,12 +101,15 @@ function EmailsPage() {
     queryFn: async () => {
       if (!w) return [];
       if (demoMode) return demoEmailJobs(w);
-      const { data } = await supabase
-        .from("email_jobs")
-        .select("*")
-        .eq("week_start", w)
-        .order("created_at", { ascending: false });
-      return (data ?? []).filter((row) => !isSeededDemoEmail(row.customer_email));
+      const data = await fetchAllSupabaseRows<any>((from, to) =>
+        supabase
+          .from("email_jobs")
+          .select("*")
+          .eq("week_start", w)
+          .order("created_at", { ascending: false })
+          .range(from, to),
+      );
+      return data.filter((row) => !isSeededDemoEmail(row.customer_email));
     },
     enabled: !!w,
   });

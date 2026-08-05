@@ -40,11 +40,11 @@ const METRICS: MetricSpec[] = [
   {
     key: "review_to_final_edit",
     label: "Tickets QC'd - Review to Final Edit",
-    target: "QC row count",
-    source: "Ticket QC export. The file name must include QC.",
-    formula: "total imported data rows in the QC file",
-    columns: ["Any ticket rows"],
-    why: "For now this metric displays the number of tickets in the QC file. The earlier percentage calculation is no longer used.",
+    target: ">= 95%",
+    source: "Ticket QC exports. File names must include TicketQC REVIEW and TicketQC FINAL.",
+    formula: "TicketQC FINAL imported rows / TicketQC REVIEW imported rows x 100",
+    columns: ["TicketQC REVIEW rows", "TicketQC FINAL rows"],
+    why: "The dashboard waits until both QC files exist for the selected date range, then compares final-stage tickets to review-stage tickets.",
   },
   {
     key: "ticket_quality",
@@ -132,8 +132,8 @@ function HowItWorks() {
             <Upload className="w-5 h-5 text-primary mb-2" />
             <div className="font-medium">1. Upload the exports</div>
             <p className="text-sm text-muted-foreground mt-1">
-              Use file names containing active review final, QC, invoice cycle time, total cycle time, or open jobs so
-              rows go into the right calculation group.
+              Use file names containing active review final, TicketQC REVIEW, TicketQC FINAL,
+              invoice cycle time, total cycle time, or open jobs so rows go into the right calculation group.
             </p>
           </Card>
           <Card className="p-5">
@@ -189,7 +189,7 @@ function HowItWorks() {
                   Invoice Cycle Time uses column J <code>Deliver/Pickup</code>
                 </li>
                 <li>
-                  Ticket QC uses the total imported data rows
+                  Ticket QC uses TicketQC FINAL rows divided by TicketQC REVIEW rows
                 </li>
               </ul>
             </div>

@@ -16,6 +16,7 @@ import { z } from "zod";
 import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_CURRENT_WEEK, demoCustomers, demoOpenJobs } from "@/lib/demoData";
 import { isSeededDemoEmail, isSeededDemoPayload } from "@/lib/liveData";
+import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
 
 export const Route = createFileRoute("/_authenticated/customers")({ component: CustomersPage });
 
@@ -53,6 +54,40 @@ function CustomersPage() {
     },
   });
 
+  const openJobCustomersQ = useQuery({
+    queryKey: ["customers_from_open_jobs", demoMode],
+    queryFn: async () => {
+      if (demoMode) return [];
+      const data = await fetchAllSupabaseRows<any>((from, to) =>
+        supabase
+          .from("open_jobs")
+          .select("customer_key,customer_name,details,week_start")
+          .order("week_start", { ascending: false })
+          .range(from, to),
+      );
+      const map = new Map<string, any>();
+      for (const row of data) {
+        if (isSeededDemoPayload(row.details)) continue;
+        const key = String(row.customer_key ?? "").trim();
+        const name = String(row.customer_name ?? "").trim();
+        if (!key || !name) continue;
+        if (!map.has(key)) {
+          map.set(key, {
+            id: `open-job-${key}`,
+            key,
+            name,
+            email: null,
+            cc_emails: [],
+            enabled: true,
+            last_email_sent_at: null,
+            derived_from_open_jobs: true,
+          });
+        }
+      }
+      return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+    },
+  });
+
   const jobsCountQ = useQuery({
     queryKey: ["customers_active_jobs", demoMode],
     queryFn: async () => {
@@ -61,15 +96,36 @@ function CustomersPage() {
         for (const r of demoOpenJobs(DEMO_CURRENT_WEEK)) map[r.customer_key] = (map[r.customer_key] ?? 0) + 1;
         return map;
       }
-      const { data: latest } = await supabase.from("open_jobs").select("week_start,details").order("week_start", { ascending: false });
-      const week = latest?.find((row) => !isSeededDemoPayload(row.details))?.week_start;
+      const latest = await fetchAllSupabaseRows<any>((from, to) =>
+        supabase
+          .from("open_jobs")
+          .select("week_start,details")
+          .order("week_start", { ascending: false })
+          .range(from, to),
+      );
+      const week = latest.find((row) => !isSeededDemoPayload(row.details))?.week_start;
       if (!week) return {} as Record<string, number>;
-      const { data } = await supabase.from("open_jobs").select("customer_key,details").eq("week_start", week);
+      const data = await fetchAllSupabaseRows<any>((from, to) =>
+        supabase
+          .from("open_jobs")
+          .select("customer_key,details")
+          .eq("week_start", week)
+          .range(from, to),
+      );
       const map: Record<string, number> = {};
-      for (const r of data ?? []) if (!isSeededDemoPayload(r.details)) map[r.customer_key] = (map[r.customer_key] ?? 0) + 1;
+      for (const r of data) if (!isSeededDemoPayload(r.details)) map[r.customer_key] = (map[r.customer_key] ?? 0) + 1;
       return map;
     },
   });
+
+  const customers = useMemo(() => {
+    const saved = custsQ.data ?? [];
+    const savedKeys = new Set(saved.map((customer: any) => customer.key));
+    return [
+      ...saved,
+      ...(openJobCustomersQ.data ?? []).filter((customer: any) => !savedKeys.has(customer.key)),
+    ].sort((a: any, b: any) => a.name.localeCompare(b.name));
+  }, [custsQ.data, openJobCustomersQ.data]);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -84,15 +140,15 @@ function CustomersPage() {
         enabled: form.enabled,
         updated_at: new Date().toISOString(),
       };
-      if (editing) {
+      if (editing && !editing.derived_from_open_jobs) {
         const { error } = await supabase.from("customers").update(payload).eq("id", editing.id);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from("customers").insert(payload);
+        const { error } = await supabase.from("customers").upsert(payload, { onConflict: "key" });
         if (error) throw error;
       }
     },
-    onSuccess: () => { toast.success("Saved"); setOpen(false); setEditing(null); setForm(empty); qc.invalidateQueries({ queryKey: ["customers"] }); },
+    onSuccess: () => { toast.success("Saved"); setOpen(false); setEditing(null); setForm(empty); qc.invalidateQueries({ queryKey: ["customers"] }); qc.invalidateQueries({ queryKey: ["customers_from_open_jobs"] }); },
     onError: (e: any) => toast.error(e.message),
   });
 
@@ -103,11 +159,21 @@ function CustomersPage() {
   });
 
   const toggleEnabled = useMutation({
-    mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
-      const { error } = await supabase.from("customers").update({ enabled }).eq("id", id);
+    mutationFn: async ({ customer, enabled }: { customer: any; enabled: boolean }) => {
+      const payload = {
+        key: customer.key,
+        name: customer.name,
+        email: customer.email ?? null,
+        cc_emails: customer.cc_emails ?? [],
+        enabled,
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = customer.derived_from_open_jobs
+        ? await supabase.from("customers").upsert(payload, { onConflict: "key" })
+        : await supabase.from("customers").update({ enabled }).eq("id", customer.id);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["customers"] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["customers"] }); qc.invalidateQueries({ queryKey: ["customers_from_open_jobs"] }); },
   });
 
   const testEmail = useMutation({
@@ -222,7 +288,7 @@ function CustomersPage() {
             </tr>
           </thead>
           <tbody>
-            {(custsQ.data ?? []).map((c: any) => (
+            {customers.map((c: any) => (
               <tr key={c.id} className={`border-t ${!c.enabled ? "opacity-60" : ""}`}>
                 <td className="px-6 py-3">
                   <div className="font-medium">{c.name}</div>
@@ -238,20 +304,20 @@ function CustomersPage() {
                 <td className="px-6 py-3 text-right font-semibold">{jobsCountQ.data?.[c.key] ?? 0}</td>
                 <td className="px-6 py-3 text-muted-foreground text-xs">{c.last_email_sent_at ? new Date(c.last_email_sent_at).toLocaleString() : "—"}</td>
                 <td className="px-6 py-3">
-                  <Switch checked={!!c.enabled} onCheckedChange={(v) => toggleEnabled.mutate({ id: c.id, enabled: v })} disabled={!user} />
+                  <Switch checked={!!c.enabled} onCheckedChange={(v) => toggleEnabled.mutate({ customer: c, enabled: v })} disabled={!user} />
                 </td>
                 <td className="px-6 py-3 text-right space-x-1 whitespace-nowrap">
-                  <Button size="sm" variant="ghost" onClick={() => testEmail.mutate(c)} disabled={!c.email} title="Queue test email">
+                  <Button size="sm" variant="ghost" onClick={() => testEmail.mutate(c)} disabled={!c.email || c.derived_from_open_jobs} title="Queue test email">
                     <Mail className="w-4 h-4" />
                   </Button>
                   {user && <Button size="sm" variant="ghost" onClick={() => edit(c)}><Pencil className="w-4 h-4" /></Button>}
-                  {role === "admin" && <>
+                  {role === "admin" && !c.derived_from_open_jobs && <>
                     <Button size="sm" variant="ghost" onClick={() => confirm("Delete this customer?") && del.mutate(c.id)}><Trash2 className="w-4 h-4 text-destructive" /></Button>
                   </>}
                 </td>
               </tr>
             ))}
-            {(custsQ.data ?? []).length === 0 && (
+            {customers.length === 0 && (
               <tr><td colSpan={7} className="text-center py-8 text-sm text-muted-foreground">No customers yet.</td></tr>
             )}
           </tbody>

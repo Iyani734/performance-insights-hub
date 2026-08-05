@@ -17,11 +17,11 @@ const METRICS: MetricDefinition[] = [
     label: "Tickets QC'd - Review to Final Edit",
     owner: "Dispatch",
     cadence: "Weekly",
-    target: "QC row count",
-    source: "Ticket QC uploads. The file name must include QC, for example Ticket QC 07_31_26.xlsx.",
-    formula: "Total imported data rows in the QC file. The header row is not counted.",
-    columns: ["Any ticket rows"],
-    note: "For now this metric displays the number of tickets in the QC file. The earlier percentage calculation is no longer used.",
+    target: ">= 95%",
+    source: "Ticket QC uploads. The file names must include TicketQC REVIEW and TicketQC FINAL.",
+    formula: "TicketQC FINAL imported rows / TicketQC REVIEW imported rows x 100.",
+    columns: ["TicketQC REVIEW rows", "TicketQC FINAL rows"],
+    note: "The header rows are not counted. The KPI stays blank until both Review and Final files exist for the selected date range.",
   },
   {
     label: "Ticket Quality",
@@ -128,8 +128,9 @@ export function MetricCalculationGuide() {
             <span className="text-sm font-medium">Upload rule</span>
           </div>
           <p className="mt-2 text-sm text-muted-foreground">
-            The file name determines the calculation. Use names containing active review final, QC,
-            invoice cycle time, total cycle time, or open jobs; the selected report type must match the file name.
+            The file name determines the calculation. Use names containing active review final,
+            TicketQC REVIEW, TicketQC FINAL, invoice cycle time, total cycle time, or open jobs;
+            the selected report type must match the file name.
           </p>
         </div>
       </section>

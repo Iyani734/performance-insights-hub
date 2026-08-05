@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
 import { z } from "zod";
 
 type OpenJobRow = {
@@ -47,11 +48,9 @@ export const sendOpenJobsEmails = createServerFn({ method: "POST" })
     if (!resendApiKey) throw new Error("Missing RESEND_API_KEY environment variable.");
     if (!fromEmail) throw new Error("Missing RESEND_FROM_EMAIL environment variable.");
 
-    const { data: jobsData, error: jobsError } = await supabaseAdmin
-      .from("open_jobs")
-      .select("*")
-      .eq("week_start", data.weekStart);
-    if (jobsError) throw jobsError;
+    const jobsData = await fetchAllSupabaseRows<any>((from, to) =>
+      supabaseAdmin.from("open_jobs").select("*").eq("week_start", data.weekStart).range(from, to),
+    );
 
     const jobsByCustomer = new Map<string, OpenJobRow[]>();
     for (const job of jobsData ?? []) {
@@ -64,29 +63,34 @@ export const sendOpenJobsEmails = createServerFn({ method: "POST" })
 
     if (jobsByCustomer.size === 0) throw new Error("No open jobs found for this week.");
 
-    let customerQuery = supabaseAdmin
-      .from("customers")
-      .select("id,key,name,email,cc_emails,enabled")
-      .in("key", Array.from(jobsByCustomer.keys()));
+    const customerKeys = Array.from(jobsByCustomer.keys());
+    const customersData = await fetchAllSupabaseRows<CustomerRow>((from, to) => {
+      let customerQuery = supabaseAdmin
+        .from("customers")
+        .select("id,key,name,email,cc_emails,enabled")
+        .in("key", customerKeys)
+        .range(from, to);
 
-    if (data.customerIds?.length) {
-      customerQuery = customerQuery.in("id", data.customerIds);
-    }
+      if (data.customerIds?.length) {
+        customerQuery = customerQuery.in("id", data.customerIds);
+      }
 
-    const { data: customersData, error: customersError } = await customerQuery;
-    if (customersError) throw customersError;
+      return customerQuery;
+    });
 
-    const customers = ((customersData ?? []) as CustomerRow[]).filter(
+    const customers = customersData.filter(
       (customer) => customer.enabled && customer.email,
     );
     if (customers.length === 0) throw new Error("No enabled customers with email addresses found.");
 
-    const { data: sentRows, error: sentError } = await supabaseAdmin
-      .from("email_jobs")
-      .select("customer_id,customer_email,status")
-      .eq("week_start", data.weekStart)
-      .eq("status", "sent");
-    if (sentError) throw sentError;
+    const sentRows = await fetchAllSupabaseRows<any>((from, to) =>
+      supabaseAdmin
+        .from("email_jobs")
+        .select("customer_id,customer_email,status")
+        .eq("week_start", data.weekStart)
+        .eq("status", "sent")
+        .range(from, to),
+    );
 
     const sentCustomerIds = new Set(
       (sentRows ?? []).map((row) => row.customer_id).filter((id): id is string => !!id),

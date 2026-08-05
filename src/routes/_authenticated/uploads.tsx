@@ -35,7 +35,7 @@ import {
   User as UserIcon,
 } from "lucide-react";
 import { formatWeek } from "@/lib/kpi";
-import { readWorkbook, parseTicketsSheet, parseOpenJobsSheet } from "@/lib/parse";
+import { readWorkbook, parseTicketsSheet, parseOpenJobsSheet, type ParseStats } from "@/lib/parse";
 import { useAuth } from "@/lib/useAuth";
 import { useDemoMode } from "@/lib/demoMode";
 import { isSeededDemoUpload } from "@/lib/liveData";
@@ -47,6 +47,7 @@ import {
 } from "@/lib/kpiRules";
 import {
   identifyReportKindFromFileName,
+  identifyTicketQcStageFromFileName,
   REPORT_KINDS,
   reportKindHint,
   reportKindLabel,
@@ -71,6 +72,56 @@ function isExcelFile(file: File) {
   return /\.(xlsx|xls)$/i.test(file.name);
 }
 
+function validateUploadSelection(files: File[], kind: ReportKind) {
+  if (!files.length) throw new Error("Choose an Excel file before uploading.");
+  if (files.some((file) => !isExcelFile(file))) throw new Error("Upload .xlsx or .xls files only.");
+  if (kind !== "ticket_qc" && files.length > 1) {
+    throw new Error(`${reportKindLabel(kind)} accepts one file per upload.`);
+  }
+
+  const stages = new Set<string>();
+  for (const file of files) {
+    const inferredKind = identifyReportKindFromFileName(file.name);
+    if (!inferredKind) {
+      throw new Error(
+        "The file name must include active review final, TicketQC REVIEW, TicketQC FINAL, invoice cycle time, total cycle time, or open jobs.",
+      );
+    }
+    if (inferredKind !== kind) {
+      throw new Error(
+        `This file name matches ${reportKindLabel(inferredKind)}. Select ${reportKindLabel(inferredKind)} or rename the file.`,
+      );
+    }
+    if (kind === "ticket_qc") {
+      const stage = identifyTicketQcStageFromFileName(file.name);
+      if (!stage) {
+        throw new Error("Ticket QC file names must include TicketQC REVIEW or TicketQC FINAL.");
+      }
+      if (stages.has(stage)) {
+        throw new Error("Upload only one TicketQC REVIEW file and one TicketQC FINAL file at a time.");
+      }
+      stages.add(stage);
+    }
+  }
+}
+
+function mergeStats(stats: ParseStats[]): ParseStats {
+  return stats.reduce<ParseStats>(
+    (total, current) => ({
+      source_rows: total.source_rows + current.source_rows,
+      sheet_rows:
+        total.sheet_rows != null || current.sheet_rows != null
+          ? (total.sheet_rows ?? 0) + (current.sheet_rows ?? 0)
+          : undefined,
+      imported: total.imported + current.imported,
+      skipped: total.skipped + current.skipped,
+      errors: total.errors + current.errors,
+      error_details: [...total.error_details, ...current.error_details],
+    }),
+    { source_rows: 0, sheet_rows: undefined, imported: 0, skipped: 0, errors: 0, error_details: [] },
+  );
+}
+
 async function insertBatches<T>(rows: T[], insert: (batch: T[]) => Promise<void>) {
   const batches = chunk(rows, 500);
   let nextBatch = 0;
@@ -88,6 +139,7 @@ function buildDemoUploadMetrics(
   rows: any[],
   _effectiveFrom: string,
   _effectiveTo: string,
+  fileName: string,
 ): DemoUploadMetrics | undefined {
   if (kind === "open_jobs") return undefined;
   if (kind === "active_review_final") {
@@ -104,9 +156,12 @@ function buildDemoUploadMetrics(
     };
   }
   if (kind === "ticket_qc") {
+    const stage = identifyTicketQcStageFromFileName(fileName);
     return {
       qcTickets: rows.length,
-      reviewToFinalEdit: rows.length,
+      qcReviewTickets: stage === "review" ? rows.length : undefined,
+      qcFinalTickets: stage === "final" ? rows.length : undefined,
+      reviewToFinalEdit: null,
     };
   }
   return {
@@ -124,7 +179,7 @@ function UploadsPage() {
   const [kind, setKind] = useState<ReportKind>("active_review_final");
   const [effectiveFrom, setEffectiveFrom] = useState<string>(defaultRange.from);
   const [effectiveTo, setEffectiveTo] = useState<string>(defaultRange.to);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [demoUploadedRows, setDemoUploadedRows] =
     useState<DemoUploadRecord[]>(loadDemoLocalUploads);
@@ -186,223 +241,236 @@ function UploadsPage() {
   );
 
   const upload = useMutation({
-    mutationFn: async (selectedFile: File | null) => {
-      if (!selectedFile) throw new Error("Choose an Excel file before uploading.");
-      if (!isExcelFile(selectedFile)) throw new Error("Upload a .xlsx or .xls file.");
-      const inferredKind = identifyReportKindFromFileName(selectedFile.name);
-      if (!inferredKind) {
-        throw new Error(
-          "The file name must include active review final, QC, invoice cycle time, total cycle time, or open jobs.",
-        );
-      }
-      if (inferredKind !== kind) {
-        throw new Error(
-          `This file name matches ${reportKindLabel(inferredKind)}. Select ${reportKindLabel(inferredKind)} or rename the file.`,
-        );
-      }
-      const t0 = performance.now();
-      setUploadStage("Reading spreadsheet...");
-      const workbookPromise = readWorkbook(selectedFile);
-      if (demoMode) {
-        const wb = await workbookPromise;
-        setUploadStage("Checking rows...");
-        const parsed = kind === "open_jobs" ? parseOpenJobsSheet(wb) : parseTicketsSheet(wb);
-        const dt = Math.round(performance.now() - t0);
-        return {
-          stats: parsed.stats,
-          demoUpload: {
-            id: `demo-local-upload-${Date.now()}`,
-            kind,
+    mutationFn: async (selectedFiles: File[]) => {
+      validateUploadSelection(selectedFiles, kind);
+
+      const processOneFile = async (selectedFile: File) => {
+        const t0 = performance.now();
+        setUploadStage(`Reading ${selectedFile.name}...`);
+        const workbookPromise = readWorkbook(selectedFile);
+        if (demoMode) {
+          const wb = await workbookPromise;
+          setUploadStage(`Checking rows in ${selectedFile.name}...`);
+          const parsed = kind === "open_jobs" ? parseOpenJobsSheet(wb) : parseTicketsSheet(wb);
+          const dt = Math.round(performance.now() - t0);
+          return {
+            stats: parsed.stats,
+            demoUpload: {
+              id: `demo-local-upload-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              kind,
+              week_start: uploadBucket,
+              effective_from: effectiveFrom,
+              effective_to: effectiveTo,
+              file_name: selectedFile.name,
+              file_path: null,
+              row_count: parsed.stats.imported,
+              uploaded_by: null,
+              created_at: new Date().toISOString(),
+              rows_skipped: parsed.stats.skipped,
+              errors_count: parsed.stats.errors,
+              processing_ms: dt,
+              error_details: parsed.stats.error_details,
+              status: parsed.stats.errors > 0 ? "partial" : "success",
+              metrics: buildDemoUploadMetrics(kind, parsed.rows, effectiveFrom, effectiveTo, selectedFile.name),
+            } satisfies DemoUploadRecord,
+            customerSyncWarning: null,
+            ticketQcWaiting: false,
+          };
+        }
+
+        if (!user) throw new Error("Sign in to upload files.");
+        const filePath = `${uploadBucket}/${Date.now()}-${selectedFile.name}`;
+        setUploadStage(`Uploading ${selectedFile.name}...`);
+        const storageUpload = supabase.storage
+          .from("report-files")
+          .upload(filePath, selectedFile, { upsert: false });
+        let parsed;
+        try {
+          const wb = await workbookPromise;
+          setUploadStage(`Checking rows in ${selectedFile.name}...`);
+          parsed = kind === "open_jobs" ? parseOpenJobsSheet(wb) : parseTicketsSheet(wb);
+        } catch (error) {
+          const { error: storageError } = await storageUpload;
+          if (!storageError) await supabase.storage.from("report-files").remove([filePath]);
+          throw error;
+        }
+        const { error: storageError } = await storageUpload;
+        if (storageError)
+          throw new Error(`Could not store the original file: ${storageError.message}`);
+        const { data: up, error: reportError } = await supabase
+          .from("report_uploads")
+          .insert({
+            kind: kind as any,
             week_start: uploadBucket,
+            file_name: selectedFile.name,
+            uploaded_by: user.id,
+            row_count: 0,
+            status: "processing",
+            file_path: filePath,
             effective_from: effectiveFrom,
             effective_to: effectiveTo,
-            file_name: selectedFile.name,
-            file_path: null,
-            row_count: parsed.stats.imported,
-            uploaded_by: null,
-            created_at: new Date().toISOString(),
-            rows_skipped: parsed.stats.skipped,
-            errors_count: parsed.stats.errors,
-            processing_ms: dt,
-            error_details: parsed.stats.error_details,
-            status: parsed.stats.errors > 0 ? "partial" : "success",
-            metrics: buildDemoUploadMetrics(kind, parsed.rows, effectiveFrom, effectiveTo),
-          } satisfies DemoUploadRecord,
-        };
-      }
-      if (!user) throw new Error("Sign in to upload files.");
-      const filePath = `${uploadBucket}/${Date.now()}-${selectedFile.name}`;
-      setUploadStage("Uploading file and creating report...");
-      const storageUpload = supabase.storage
-        .from("report-files")
-        .upload(filePath, selectedFile, { upsert: false });
-      let parsed;
-      try {
-        const wb = await workbookPromise;
-        setUploadStage("Checking rows...");
-        parsed = kind === "open_jobs" ? parseOpenJobsSheet(wb) : parseTicketsSheet(wb);
-      } catch (error) {
-        const { error: storageError } = await storageUpload;
-        if (!storageError) await supabase.storage.from("report-files").remove([filePath]);
-        throw error;
-      }
-      const { error: storageError } = await storageUpload;
-      if (storageError)
-        throw new Error(`Could not store the original file: ${storageError.message}`);
-      const { data: up, error: reportError } = await supabase
-        .from("report_uploads")
-        .insert({
-          kind: kind as any,
-          week_start: uploadBucket,
-          file_name: selectedFile.name,
-          uploaded_by: user.id,
-          row_count: 0,
-          status: "processing",
-          file_path: filePath,
-          effective_from: effectiveFrom,
-          effective_to: effectiveTo,
-        } as any)
-        .select()
-        .single();
-      if (reportError || !up) {
-        await supabase.storage.from("report-files").remove([filePath]);
-        throw reportError ?? new Error("Could not create the upload record.");
-      }
-      let stats;
-      let customerSyncWarning: string | null = null;
-      try {
-        stats = parsed.stats;
-        if (kind === "open_jobs") {
-          const payload = parsed.rows.map((r) => ({
-            ...r,
-            upload_id: up.id,
-            week_start: uploadBucket,
-          }));
-          setUploadStage(`Importing ${payload.length} rows...`);
-          await insertBatches(payload, async (batch) => {
-            const { error } = await supabase.from("open_jobs").insert(batch as any);
-            if (error) throw error;
-          });
-          const customerPairs = parsed.rows.reduce((map, row) => {
-            if (row.customer_key && row.customer_name) {
-              map.set(row.customer_key, row.customer_name);
-            }
-            return map;
-          }, new Map<string, string>());
-          if (customerPairs.size) {
-            setUploadStage(`Updating ${customerPairs.size} customers...`);
-            const { error: syncError } = await supabase.rpc("sync_customers_from_open_jobs_upload", {
-              p_upload_id: up.id,
+          } as any)
+          .select()
+          .single();
+        if (reportError || !up) {
+          await supabase.storage.from("report-files").remove([filePath]);
+          throw reportError ?? new Error("Could not create the upload record.");
+        }
+
+        let stats;
+        let customerSyncWarning: string | null = null;
+        let ticketQcWaiting = false;
+        try {
+          stats = parsed.stats;
+          if (kind === "open_jobs") {
+            const payload = parsed.rows.map((r) => ({
+              ...r,
+              upload_id: up.id,
+              week_start: uploadBucket,
+            }));
+            setUploadStage(`Importing ${payload.length} rows from ${selectedFile.name}...`);
+            await insertBatches(payload, async (batch) => {
+              const { error } = await supabase.from("open_jobs").insert(batch as any);
+              if (error) throw error;
             });
-            if (syncError) {
-              const customers = Array.from(customerPairs, ([key, name]) => ({
-                key,
-                name,
-                updated_at: new Date().toISOString(),
-              }));
-              const { error } = await supabase
-                .from("customers")
-                .upsert(customers, { onConflict: "key" });
-              if (error) {
-                customerSyncWarning = (
-                  "Open Jobs imported, but customers were not synced yet. Apply the Supabase migration " +
-                  "20260804154500_open_jobs_customer_sync_rpc.sql, then upload again or run the sync RPC."
-                );
-                console.warn("Open Jobs customer sync failed", { syncError, fallbackError: error });
+            const customerPairs = parsed.rows.reduce((map, row) => {
+              if (row.customer_key && row.customer_name) {
+                map.set(row.customer_key, row.customer_name);
+              }
+              return map;
+            }, new Map<string, string>());
+            if (customerPairs.size) {
+              setUploadStage(`Updating ${customerPairs.size} customers...`);
+              const { error: syncError } = await supabase.rpc("sync_customers_from_open_jobs_upload", {
+                p_upload_id: up.id,
+              });
+              if (syncError) {
+                const customers = Array.from(customerPairs, ([key, name]) => ({
+                  key,
+                  name,
+                  updated_at: new Date().toISOString(),
+                }));
+                const { error } = await supabase
+                  .from("customers")
+                  .upsert(customers, { onConflict: "key" });
+                if (error) {
+                  customerSyncWarning = (
+                    "Open Jobs imported, but customers were not synced yet. Apply the Supabase migration " +
+                    "20260804154500_open_jobs_customer_sync_rpc.sql, then upload again or run the sync RPC."
+                  );
+                  console.warn("Open Jobs customer sync failed", { syncError, fallbackError: error });
+                }
               }
             }
+          } else if (kind !== "ticket_qc") {
+            const tKind = kind === "active_review_final" ? "tickets" : "invoiced";
+            const payload = parsed.rows.map((r) => ({
+              ...r,
+              upload_id: up.id,
+              week_start: uploadBucket,
+              kind: tKind,
+              raw: r.raw,
+            }));
+            setUploadStage(`Importing ${payload.length} rows from ${selectedFile.name}...`);
+            await insertBatches(payload, async (batch) => {
+              const { error } = await supabase.from("tickets").insert(batch as any);
+              if (error) throw error;
+            });
           }
-        } else if (kind !== "ticket_qc") {
-          const tKind = kind === "active_review_final" ? "tickets" : "invoiced";
-          const payload = parsed.rows.map((r) => ({
-            ...r,
-            upload_id: up.id,
-            week_start: uploadBucket,
-            kind: tKind,
-            raw: r.raw,
-          }));
-          setUploadStage(`Importing ${payload.length} rows...`);
-          await insertBatches(payload, async (batch) => {
-            const { error } = await supabase.from("tickets").insert(batch as any);
-            if (error) throw error;
-          });
-        }
 
-        const dt = Math.round(performance.now() - t0);
-        setUploadStage("Saving upload results...");
-        const reportWrite = supabase
-          .from("report_uploads")
-          .update({
-            row_count: stats.imported,
-            rows_skipped: stats.skipped,
-            errors_count: stats.errors,
-            processing_ms: dt,
-            error_details: stats.error_details as any,
-            status: stats.errors > 0 ? "partial" : "success",
-          })
-          .eq("id", up.id);
-        const { error: reportUpdateError } = await reportWrite;
-        if (reportUpdateError) throw reportUpdateError;
+          const dt = Math.round(performance.now() - t0);
+          setUploadStage(`Saving results for ${selectedFile.name}...`);
+          const { error: reportUpdateError } = await supabase
+            .from("report_uploads")
+            .update({
+              row_count: stats.imported,
+              rows_skipped: stats.skipped,
+              errors_count: stats.errors,
+              processing_ms: dt,
+              error_details: stats.error_details as any,
+              status: stats.errors > 0 ? "partial" : "success",
+            })
+            .eq("id", up.id);
+          if (reportUpdateError) throw reportUpdateError;
 
-        if (kind !== "open_jobs") {
-          setUploadStage("Calculating dashboard metrics...");
-          const { computeAutoKpisForRange } = await import("@/lib/kpi");
-          const auto = await computeAutoKpisForRange(effectiveFrom, effectiveTo);
-          const upserts = [
-            { kpi_key: "review_to_final_edit", actual: auto.review_to_final_edit },
-            { kpi_key: "ticket_quality", actual: auto.ticket_quality },
-            { kpi_key: "invoice_cycle_time", actual: auto.invoice_cycle_time },
-          ]
-            .filter((v) => v.actual != null)
-            .map((v) => ({ ...v, week_start: uploadBucket, source: "auto", entered_by: user.id }));
-          if (upserts.length) {
-            const { error: kpiError } = await supabase
-              .from("kpi_values")
-              .upsert(upserts, { onConflict: "kpi_key,week_start" });
-            if (kpiError) throw kpiError;
+          if (kind !== "open_jobs") {
+            setUploadStage("Calculating dashboard metrics...");
+            const { computeAutoKpisForRange } = await import("@/lib/kpi");
+            const auto = await computeAutoKpisForRange(effectiveFrom, effectiveTo);
+            ticketQcWaiting = kind === "ticket_qc" && auto.review_to_final_edit == null;
+            const upserts = [
+              { kpi_key: "review_to_final_edit", actual: auto.review_to_final_edit },
+              { kpi_key: "ticket_quality", actual: auto.ticket_quality },
+              { kpi_key: "invoice_cycle_time", actual: auto.invoice_cycle_time },
+            ]
+              .filter((v) => v.actual != null)
+              .map((v) => ({ ...v, week_start: uploadBucket, source: "auto", entered_by: user.id }));
+            if (upserts.length) {
+              const { error: kpiError } = await supabase
+                .from("kpi_values")
+                .upsert(upserts, { onConflict: "kpi_key,week_start" });
+              if (kpiError) throw kpiError;
+            }
           }
+          return { stats, demoUpload: undefined, customerSyncWarning, ticketQcWaiting };
+        } catch (error: any) {
+          const reason = error?.message ?? "Upload processing failed";
+          const details = [...(stats?.error_details ?? []), { row: 0, reason }];
+          const { error: failedStatusError } = await supabase
+            .from("report_uploads")
+            .update({
+              status: "failed",
+              errors_count: Math.max(1, stats?.errors ?? 0),
+              error_details: details,
+              processing_ms: Math.round(performance.now() - t0),
+            })
+            .eq("id", up.id);
+          if (failedStatusError) {
+            throw new Error(
+              `${reason}. The upload could not be marked as failed: ${failedStatusError.message}`,
+            );
+          }
+          throw error;
         }
-        return { stats, customerSyncWarning };
-      } catch (error: any) {
-        const reason = error?.message ?? "Upload processing failed";
-        const details = [...(stats?.error_details ?? []), { row: 0, reason }];
-        const { error: failedStatusError } = await supabase
-          .from("report_uploads")
-          .update({
-            status: "failed",
-            errors_count: Math.max(1, stats?.errors ?? 0),
-            error_details: details,
-            processing_ms: Math.round(performance.now() - t0),
-          })
-          .eq("id", up.id);
-        if (failedStatusError) {
-          throw new Error(
-            `${reason}. The upload could not be marked as failed: ${failedStatusError.message}`,
-          );
-        }
-        throw error;
+      };
+
+      const results = [];
+      for (const selectedFile of selectedFiles) {
+        results.push(await processOneFile(selectedFile));
       }
+
+      return {
+        stats: mergeStats(results.map((result) => result.stats)),
+        demoUploads: results.map((result) => result.demoUpload).filter(Boolean) as DemoUploadRecord[],
+        customerSyncWarnings: results
+          .map((result) => result.customerSyncWarning)
+          .filter((message): message is string => !!message),
+        ticketQcWaiting: results.some((result) => result.ticketQcWaiting),
+      };
     },
-    onSuccess: ({ stats: s, demoUpload, customerSyncWarning }) => {
-      if (demoUpload) {
+    onSuccess: ({ stats: s, demoUploads: uploadedDemoRows, customerSyncWarnings, ticketQcWaiting }) => {
+      if (uploadedDemoRows.length) {
         setDemoUploadedRows((prev) => {
-          const next = [demoUpload, ...prev].slice(0, 25);
+          const next = [...uploadedDemoRows, ...prev].slice(0, 25);
           saveDemoLocalUploads(next);
           return next;
         });
       }
       const workbookRows =
         s.sheet_rows && s.sheet_rows !== s.imported
-          ? ` (${s.sheet_rows} Excel rows including header)`
+          ? ` (${s.sheet_rows} Excel rows including headers)`
           : "";
       const rowSummary =
         s.source_rows === s.imported
           ? `${s.imported} data rows imported${workbookRows}`
           : `${s.source_rows} data rows found; ${s.imported} imported${s.skipped ? `, ${s.skipped} skipped` : ""}${s.errors ? `, ${s.errors} errors` : ""}${workbookRows}`;
       toast.success(rowSummary);
-      if (customerSyncWarning) toast.warning(customerSyncWarning);
+      for (const warning of Array.from(new Set(customerSyncWarnings))) toast.warning(warning);
+      if (ticketQcWaiting) {
+        toast.warning("Ticket QC imported. The KPI will calculate after both TicketQC REVIEW and TicketQC FINAL exist for this date range.");
+      }
       setUploadStage("");
-      setFile(null);
+      setFiles([]);
       setFileInputKey((v) => v + 1);
       qc.invalidateQueries();
     },
@@ -487,10 +555,12 @@ function UploadsPage() {
   }
 
   const pendingCount = (requestsQ.data ?? []).filter((r: any) => r.status === "pending").length;
-  const fileError = file && !isExcelFile(file) ? "Upload a .xlsx or .xls file." : null;
+  const fileError = files.some((selectedFile) => !isExcelFile(selectedFile))
+    ? "Upload .xlsx or .xls files only."
+    : null;
   const uploadDisabled =
     upload.isPending ||
-    !file ||
+    files.length === 0 ||
     !!fileError ||
     !effectiveFrom ||
     !effectiveTo ||
@@ -510,7 +580,14 @@ function UploadsPage() {
         <div className="grid md:grid-cols-3 gap-4">
           <div className="space-y-2">
             <Label>Report type</Label>
-            <Select value={kind} onValueChange={(v: any) => setKind(v)}>
+            <Select
+              value={kind}
+              onValueChange={(v: any) => {
+                setKind(v);
+                setFiles([]);
+                setFileInputKey((value) => value + 1);
+              }}
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -546,21 +623,29 @@ function UploadsPage() {
               key={fileInputKey}
               type="file"
               accept=".xlsx,.xls"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              multiple={kind === "ticket_qc"}
+              onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
             />
             <p className="text-xs text-muted-foreground">
               Pick the date range this file's data covers. The header row is not counted as imported
               data.
+              {kind === "ticket_qc"
+                ? " Ticket QC can accept TicketQC REVIEW and TicketQC FINAL together, or one at a time."
+                : ""}
             </p>
             {fileError && <p className="text-xs text-destructive">{fileError}</p>}
           </div>
         </div>
         <div className="mt-6 flex items-center gap-3">
-          <Button onClick={() => upload.mutate(file)} disabled={uploadDisabled}>
+          <Button onClick={() => upload.mutate(files)} disabled={uploadDisabled}>
             <UploadCloud className="w-4 h-4 mr-2" />
             {upload.isPending ? "Processing…" : demoMode ? "Process Demo File" : "Upload & Process"}
           </Button>
-          {file && <span className="text-sm text-muted-foreground">{file.name}</span>}
+          {files.length > 0 && (
+            <span className="text-sm text-muted-foreground">
+              {files.map((selectedFile) => selectedFile.name).join(", ")}
+            </span>
+          )}
           {upload.isPending && (
             <span className="text-sm text-muted-foreground">
               {uploadStage || "Starting upload..."}

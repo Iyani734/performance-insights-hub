@@ -7,6 +7,8 @@ import {
 } from "@/lib/kpiRules";
 import {
   isActiveReviewFinalUpload,
+  isTicketQcFinalUpload,
+  isTicketQcReviewUpload,
   isTicketQcUpload,
   isTotalCycleTimeUpload,
 } from "@/lib/reportTypes";
@@ -84,11 +86,11 @@ export async function computeAutoKpisForRange(from: string, to: string) {
   ]);
 
   const statusMatches = (status: unknown, value: string) => normalizeTicketStatus(status) === value;
-  const qcTickets = sumImportedRows(qcUploads);
+  const ticketQc = calculateTicketQcReviewToFinal(qcUploads);
   const totalCycleTime = calculateTotalCycleTime(cycleRows);
 
   return {
-    review_to_final_edit: qcTickets > 0 ? qcTickets : null,
+    review_to_final_edit: ticketQc.actual,
     ticket_quality: null,
     invoice_cycle_time: totalCycleTime,
     dispatch_completion: null,
@@ -96,7 +98,9 @@ export async function computeAutoKpisForRange(from: string, to: string) {
       tickets: tickets.length,
       invoiced: cycleRows.length,
       quality_issues: 0,
-      qc_tickets: qcTickets,
+      qc_tickets: ticketQc.finalRows,
+      qc_review_tickets: ticketQc.reviewRows,
+      qc_final_tickets: ticketQc.finalRows,
       cycle_time_rows: cycleRows.length,
       voided: tickets.filter((r: any) => hasValue(r.void_reason)).length,
       active_tickets: tickets.filter((r: any) => statusMatches(r.status, "active")).length,
@@ -115,16 +119,19 @@ type UploadLike = {
   effective_from: string | null;
   effective_to: string | null;
   status: string | null;
+  created_at: string | null;
 };
 
 async function fetchUploadsForRange(from: string, to: string): Promise<UploadLike[]> {
-  const { data } = await supabase
-    .from("report_uploads")
-    .select("id,kind,file_name,row_count,week_start,effective_from,effective_to,status")
-    .order("created_at", { ascending: false })
-    .limit(1000);
+  const data = await fetchAllSupabaseRows<UploadLike>((rangeFrom, rangeTo) =>
+    supabase
+      .from("report_uploads")
+      .select("id,kind,file_name,row_count,week_start,effective_from,effective_to,status,created_at")
+      .order("created_at", { ascending: false })
+      .range(rangeFrom, rangeTo),
+  );
 
-  return ((data ?? []) as UploadLike[]).filter((upload) => {
+  return data.filter((upload) => {
     if (isSeededDemoUpload(upload.file_name)) return false;
     if (upload.status === "failed" || upload.status === "processing") return false;
     const uploadFrom = upload.effective_from ?? upload.week_start;
@@ -149,4 +156,28 @@ async function fetchTicketRowsByUploadIds(uploadIds: string[], kind: "tickets" |
 
 function sumImportedRows(uploads: UploadLike[]) {
   return uploads.reduce((sum, upload) => sum + Math.max(0, Number(upload.row_count ?? 0)), 0);
+}
+
+function calculateTicketQcReviewToFinal(uploads: UploadLike[]) {
+  const reviewUpload = latestUpload(uploads.filter(isTicketQcReviewUpload));
+  const finalUpload = latestUpload(uploads.filter(isTicketQcFinalUpload));
+  const reviewRows = reviewUpload ? sumImportedRows([reviewUpload]) : 0;
+  const finalRows = finalUpload ? sumImportedRows([finalUpload]) : 0;
+
+  return {
+    reviewRows,
+    finalRows,
+    actual: reviewUpload && finalUpload && reviewRows > 0 ? (finalRows / reviewRows) * 100 : null,
+  };
+}
+
+function latestUpload(uploads: UploadLike[]) {
+  return uploads
+    .slice()
+    .sort((a, b) => uploadTimestamp(b) - uploadTimestamp(a))[0] ?? null;
+}
+
+function uploadTimestamp(upload: UploadLike) {
+  const value = Date.parse(upload.created_at ?? "");
+  return Number.isFinite(value) ? value : 0;
 }

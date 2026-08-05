@@ -57,11 +57,11 @@ export const DEMO_TARGETS: KpiTarget[] = [
     label: "Tickets QC'd - Review to Final Edit",
     owner: "Dispatch",
     cadence: "Weekly",
-    unit: "count",
+    unit: "%",
     direction: "higher_is_better",
-    green_min: 1,
-    yellow_min: 1,
-    target_display: "QC row count",
+    green_min: 95,
+    yellow_min: 85,
+    target_display: ">= 95%",
     auto: true,
     sort_order: 1,
   },
@@ -152,7 +152,7 @@ export const DEMO_TARGETS: KpiTarget[] = [
 ];
 
 const DEMO_SERIES: Record<string, number[]> = {
-  review_to_final_edit: [187, 181, 176, 169],
+  review_to_final_edit: [96.8, 96.2, 95.6, 95.1],
   ticket_quality: [1.1, 1.3, 1.5, 1.8],
   invoice_cycle_time: [2.0, 2.2, 2.4, 2.7],
   dispatch_responsiveness: [97.8, 97.2, 96.8, 96.1],
@@ -171,6 +171,8 @@ export type DemoUploadMetrics = {
   reviewTickets?: number;
   finalEditTickets?: number;
   qcTickets?: number;
+  qcReviewTickets?: number;
+  qcFinalTickets?: number;
   invoiced?: number;
   invoiceQualityIssues?: number;
   invoiceCycleDaysTotal?: number;
@@ -251,7 +253,9 @@ export function demoAutoKpis(week: string) {
       tickets: 126 - index * 4,
       invoiced: 118 - index * 3,
       quality_issues: 2 + index,
-      qc_tickets: 187 - index * 6,
+      qc_tickets: 279 - index * 6,
+      qc_review_tickets: 288 - index * 5,
+      qc_final_tickets: 279 - index * 6,
       cycle_time_rows: 1116 - index * 12,
       voided: 2 + index,
       active_tickets: 18 - index,
@@ -268,7 +272,8 @@ export function demoEmailStats() {
 export function demoUploads(): DemoUploadRecord[] {
   const kinds = [
     ["active_review_final", "demo-active-review-final.xlsx", 126],
-    ["ticket_qc", "demo-ticket-qc.xlsx", 118],
+    ["ticket_qc", "demo-ticketqc-review.xlsx", 288],
+    ["ticket_qc", "demo-ticketqc-final.xlsx", 279],
     ["total_cycle_time", "demo-total-cycle-time.xlsx", 1116],
     ["open_jobs", "demo-open-jobs.xlsx", 26],
   ] as const;
@@ -341,7 +346,9 @@ function generatedDemoAutoKpisForRange(range: DateRangeValue) {
         tickets: totals.tickets + (126 - index * 4),
         invoiced: totals.invoiced + (118 - index * 3),
         quality_issues: totals.quality_issues + (2 + index),
-        qc_tickets: totals.qc_tickets + (187 - index * 6),
+        qc_tickets: totals.qc_tickets + (279 - index * 6),
+        qc_review_tickets: totals.qc_review_tickets + (288 - index * 5),
+        qc_final_tickets: totals.qc_final_tickets + (279 - index * 6),
         cycle_time_rows: totals.cycle_time_rows + (1116 - index * 12),
         voided: totals.voided + (2 + index),
         active_tickets: totals.active_tickets + (18 - index),
@@ -353,6 +360,8 @@ function generatedDemoAutoKpisForRange(range: DateRangeValue) {
         invoiced: 0,
         quality_issues: 0,
         qc_tickets: 0,
+        qc_review_tickets: 0,
+        qc_final_tickets: 0,
         cycle_time_rows: 0,
         voided: 0,
         active_tickets: 0,
@@ -375,11 +384,13 @@ function localDemoAutoKpisForRange(range: DateRangeValue) {
       totals.reviewTickets += m.reviewTickets ?? 0;
       totals.finalEditTickets += m.finalEditTickets ?? 0;
       totals.qcTickets += m.qcTickets ?? 0;
+      totals.qcReviewTickets += m.qcReviewTickets ?? 0;
+      totals.qcFinalTickets += m.qcFinalTickets ?? 0;
       totals.invoiced += m.invoiced ?? 0;
       totals.invoiceQualityIssues += m.invoiceQualityIssues ?? 0;
       totals.invoiceCycleDaysTotal += m.invoiceCycleDaysTotal ?? 0;
       totals.invoiceCycleCount += m.invoiceCycleCount ?? 0;
-      const reviewValue = m.reviewToFinalEdit ?? (m.qcTickets != null ? m.qcTickets : null);
+      const reviewValue = m.reviewToFinalEdit ?? null;
       const qualityValue =
         m.ticketQuality ??
         (m.invoiced != null && m.invoiced > 0 && m.invoiceQualityIssues != null
@@ -412,6 +423,8 @@ function localDemoAutoKpisForRange(range: DateRangeValue) {
       invoiceCycleDaysTotal: 0,
       invoiceCycleCount: 0,
       qcTickets: 0,
+      qcReviewTickets: 0,
+      qcFinalTickets: 0,
       reviewValues: [] as number[],
       qualityValues: [] as number[],
       invoiceCycleValues: [] as number[],
@@ -421,7 +434,10 @@ function localDemoAutoKpisForRange(range: DateRangeValue) {
   );
 
   return {
-    review_to_final_edit: average(metrics.reviewValues),
+    review_to_final_edit:
+      metrics.qcReviewTickets > 0 && metrics.qcFinalTickets > 0
+        ? (metrics.qcFinalTickets / metrics.qcReviewTickets) * 100
+        : average(metrics.reviewValues),
     ticket_quality: average(metrics.qualityValues),
     invoice_cycle_time: average(metrics.invoiceCycleValues),
     dispatch_completion:
@@ -431,7 +447,9 @@ function localDemoAutoKpisForRange(range: DateRangeValue) {
     totals: {
       tickets: metrics.tickets,
       invoiced: metrics.invoiced,
-      qc_tickets: metrics.qcTickets,
+      qc_tickets: metrics.qcFinalTickets || metrics.qcTickets,
+      qc_review_tickets: metrics.qcReviewTickets,
+      qc_final_tickets: metrics.qcFinalTickets,
       cycle_time_rows: metrics.invoiced,
       quality_issues: metrics.hasInvoiced
         ? metrics.invoiceQualityIssues
@@ -465,6 +483,14 @@ export function demoAutoKpisForRange(range: DateRangeValue) {
           : generated.totals.quality_issues,
       qc_tickets:
         local.review_to_final_edit != null ? local.totals.qc_tickets : generated.totals.qc_tickets,
+      qc_review_tickets:
+        local.review_to_final_edit != null
+          ? local.totals.qc_review_tickets
+          : generated.totals.qc_review_tickets,
+      qc_final_tickets:
+        local.review_to_final_edit != null
+          ? local.totals.qc_final_tickets
+          : generated.totals.qc_final_tickets,
       cycle_time_rows: local.hasInvoiced
         ? local.totals.cycle_time_rows
         : generated.totals.cycle_time_rows,
@@ -489,12 +515,12 @@ export function demoKpiValuesWithLocal() {
     const week_start = upload.effective_from ?? upload.week_start;
     const created_at = upload.created_at;
     const rows = [];
-    if (m.qcTickets != null && m.qcTickets > 0) {
+    if (m.reviewToFinalEdit != null) {
       rows.push({
         id: `${upload.id}-review`,
         kpi_key: "review_to_final_edit",
         week_start,
-        actual: m.reviewToFinalEdit ?? m.qcTickets,
+        actual: m.reviewToFinalEdit,
         source: "demo-upload",
         entered_by: null,
         created_at,

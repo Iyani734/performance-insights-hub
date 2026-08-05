@@ -4,6 +4,8 @@ export type ReportKind =
   | "total_cycle_time"
   | "open_jobs";
 
+export type TicketQcStage = "review" | "final";
+
 export const REPORT_KINDS: { value: ReportKind; label: string; hint: string }[] = [
   {
     value: "active_review_final",
@@ -13,7 +15,7 @@ export const REPORT_KINDS: { value: ReportKind; label: string; hint: string }[] 
   {
     value: "ticket_qc",
     label: "Ticket QC",
-    hint: "File name must include QC.",
+    hint: "Upload TicketQC REVIEW and TicketQC FINAL. Both are required before the KPI calculates.",
   },
   {
     value: "total_cycle_time",
@@ -63,6 +65,20 @@ export function identifyReportKindFromFileName(fileName: string): ReportKind | n
   return null;
 }
 
+export function identifyTicketQcStageFromFileName(fileName: string): TicketQcStage | null {
+  const words = normalizedWords(fileName);
+  const compact = words.join("");
+  const hasQc = words.includes("qc") || words.includes("ticketqc") || compact.includes("ticketqc");
+  if (!hasQc) return null;
+
+  const hasReview = words.includes("review") || compact.includes("review");
+  const hasFinal = words.includes("final") || compact.includes("final");
+
+  if (hasReview && !hasFinal) return "review";
+  if (hasFinal && !hasReview) return "final";
+  return null;
+}
+
 export function reportKindMatchesFileName(kind: ReportKind, fileName: string) {
   return identifyReportKindFromFileName(fileName) === kind;
 }
@@ -73,6 +89,14 @@ export function isActiveReviewFinalUpload(upload: { kind?: string | null; file_n
 
 export function isTicketQcUpload(upload: { kind?: string | null; file_name?: string | null }) {
   return upload.kind === "ticket_qc" || identifyReportKindFromFileName(upload.file_name ?? "") === "ticket_qc";
+}
+
+export function isTicketQcReviewUpload(upload: { kind?: string | null; file_name?: string | null }) {
+  return isTicketQcUpload(upload) && identifyTicketQcStageFromFileName(upload.file_name ?? "") === "review";
+}
+
+export function isTicketQcFinalUpload(upload: { kind?: string | null; file_name?: string | null }) {
+  return isTicketQcUpload(upload) && identifyTicketQcStageFromFileName(upload.file_name ?? "") === "final";
 }
 
 export function isTotalCycleTimeUpload(upload: { kind?: string | null; file_name?: string | null }) {
