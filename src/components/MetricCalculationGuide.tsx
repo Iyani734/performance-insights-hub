@@ -31,7 +31,7 @@ const METRICS: MetricDefinition[] = [
     source: "Manual entry or a future dedicated quality issue source",
     formula: "Quality issue count / total invoiced tickets x 100.",
     columns: ["Void Reason", "Driver Error", "Quality Issue"],
-    note: "Lower is better. This is not calculated from Active/Review/Final, QC, or Total Cycle Time uploads until a dedicated quality issue file is supplied.",
+    note: "Lower is better. This is not calculated from Active/Review/Final, QC, or Invoice Cycle Time uploads until a dedicated quality issue file is supplied.",
   },
   {
     label: "Quality Issues",
@@ -48,7 +48,7 @@ const METRICS: MetricDefinition[] = [
     owner: "Invoicing",
     cadence: "Weekly",
     target: "<= 3 days",
-    source: "Total Cycle Time uploads. The file name must include total cycle time.",
+    source: "Invoice Cycle Time uploads. The file name must include invoice cycle time or total cycle time.",
     formula:
       "Business days from the oldest Deliver/Pickup date in the file to today, excluding weekends.",
     columns: ["Column J: Deliver/Pickup"],
@@ -129,7 +129,7 @@ export function MetricCalculationGuide() {
           </div>
           <p className="mt-2 text-sm text-muted-foreground">
             The file name determines the calculation. Use names containing active review final, QC,
-            total cycle time, or open jobs; the selected report type must match the file name.
+            invoice cycle time, total cycle time, or open jobs; the selected report type must match the file name.
           </p>
         </div>
       </section>

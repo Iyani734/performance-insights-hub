@@ -14,6 +14,7 @@ import { addDays, DEMO_TARGETS, DEMO_WEEKS, demoAutoKpisForRange, demoKpiValues 
 import { isSeededDemoPayload, isSeededDemoSource, isSeededDemoUpload } from "@/lib/liveData";
 import { normalizeTicketStatus } from "@/lib/kpiRules";
 import { isActiveReviewFinalUpload } from "@/lib/reportTypes";
+import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
 
 export const Route = createFileRoute("/_authenticated/analytics")({ component: AnalyticsPage });
 
@@ -107,13 +108,16 @@ function AnalyticsPage() {
         .filter(isActiveReviewFinalUpload)
         .map((upload) => upload.id);
       if (!uploadIds.length) return [];
-      const { data } = await supabase
-        .from("tickets")
-        .select("week_start,status,raw")
-        .in("upload_id", uploadIds)
-        .eq("kind", "tickets")
-        .order("week_start");
-      return buildTicketStatusRows((data ?? []).filter((row) => !isSeededDemoPayload(row.raw)));
+      const data = await fetchAllSupabaseRows<any>((from, to) =>
+        supabase
+          .from("tickets")
+          .select("week_start,status,raw")
+          .in("upload_id", uploadIds)
+          .eq("kind", "tickets")
+          .order("week_start")
+          .range(from, to),
+      );
+      return buildTicketStatusRows(data.filter((row) => !isSeededDemoPayload(row.raw)));
     },
   });
 

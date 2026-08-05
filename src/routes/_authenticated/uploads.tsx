@@ -192,7 +192,7 @@ function UploadsPage() {
       const inferredKind = identifyReportKindFromFileName(selectedFile.name);
       if (!inferredKind) {
         throw new Error(
-          "The file name must include active review final, QC, total cycle time, or open jobs.",
+          "The file name must include active review final, QC, invoice cycle time, total cycle time, or open jobs.",
         );
       }
       if (inferredKind !== kind) {
@@ -502,7 +502,7 @@ function UploadsPage() {
       <header>
         <h1 className="font-display text-3xl font-semibold">Report Uploads</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Upload Active/Review/Final, Ticket QC, Total Cycle Time, or Open Jobs exports.
+          Upload Active/Review/Final, Ticket QC, Invoice Cycle Time, or Open Jobs exports.
         </p>
       </header>
 

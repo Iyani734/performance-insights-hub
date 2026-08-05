@@ -32,7 +32,7 @@ const METRICS: MetricSpec[] = [
     key: "invoice_cycle_time",
     label: "Invoice Cycle Time (Final Edit to Invoice)",
     target: "<= 3 days",
-    source: "Total Cycle Time export. The file name must include total cycle time.",
+    source: "Invoice Cycle Time export. The file name must include invoice cycle time or total cycle time.",
     formula: "business days from the oldest Deliver/Pickup date to today, excluding weekends",
     columns: ["Column J: Deliver/Pickup"],
     why: "The app sorts Deliver/Pickup dates from oldest to newest, uses the oldest date, then counts business days through the current day.",
@@ -53,7 +53,7 @@ const METRICS: MetricSpec[] = [
     source: "Manual entry or a future dedicated quality issue source",
     formula: "quality issue count / total invoiced tickets x 100",
     columns: ["Void Reason", "Driver Error", "Quality Issue"],
-    why: "The ARC metric is a quality-error rate, so lower is better. The current Active/Review/Final, QC, and Total Cycle Time files do not calculate this automatically.",
+    why: "The ARC metric is a quality-error rate, so lower is better. The current Active/Review/Final, QC, and Invoice Cycle Time files do not calculate this automatically.",
   },
   {
     key: "dispatch_responsiveness",
@@ -132,7 +132,7 @@ function HowItWorks() {
             <Upload className="w-5 h-5 text-primary mb-2" />
             <div className="font-medium">1. Upload the exports</div>
             <p className="text-sm text-muted-foreground mt-1">
-              Use file names containing active review final, QC, total cycle time, or open jobs so
+              Use file names containing active review final, QC, invoice cycle time, total cycle time, or open jobs so
               rows go into the right calculation group.
             </p>
           </Card>
@@ -161,11 +161,11 @@ function HowItWorks() {
           </div>
           <p className="text-sm text-muted-foreground mb-4">
             The parser reads a single sheet with a header row. Active/Review/Final expects Status in
-            column F, and Total Cycle Time expects Deliver/Pickup in column J.
+            column F, and Invoice Cycle Time expects Deliver/Pickup in column J.
           </p>
           <div className="grid md:grid-cols-2 gap-4 text-sm">
             <div>
-              <div className="font-medium mb-1">Active/Review/Final, Ticket QC, Total Cycle Time</div>
+              <div className="font-medium mb-1">Active/Review/Final, Ticket QC, Invoice Cycle Time</div>
               <ul className="list-disc list-inside space-y-0.5 text-muted-foreground">
                 <li>
                   <code>Ticket #</code> or <code>TicketID</code>
@@ -186,7 +186,7 @@ function HowItWorks() {
                   Active/Review/Final uses column F <code>Status</code>
                 </li>
                 <li>
-                  Total Cycle Time uses column J <code>Deliver/Pickup</code>
+                  Invoice Cycle Time uses column J <code>Deliver/Pickup</code>
                 </li>
                 <li>
                   Ticket QC uses the total imported data rows

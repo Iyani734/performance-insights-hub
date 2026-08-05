@@ -10,6 +10,7 @@ import {
   isTicketQcUpload,
   isTotalCycleTimeUpload,
 } from "@/lib/reportTypes";
+import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
 
 export type KpiTarget = {
   id: string;
@@ -134,13 +135,16 @@ async function fetchUploadsForRange(from: string, to: string): Promise<UploadLik
 
 async function fetchTicketRowsByUploadIds(uploadIds: string[], kind: "tickets" | "invoiced") {
   if (!uploadIds.length) return [];
-  const { data } = await supabase
-    .from("tickets")
-    .select("upload_id,final_edited_by,void_reason,date_recv,kind,status,raw")
-    .in("upload_id", uploadIds)
-    .eq("kind", kind);
+  const data = await fetchAllSupabaseRows<any>((from, to) =>
+    supabase
+      .from("tickets")
+      .select("upload_id,final_edited_by,void_reason,date_recv,kind,status,raw")
+      .in("upload_id", uploadIds)
+      .eq("kind", kind)
+      .range(from, to),
+  );
 
-  return (data ?? []).filter((row) => !isSeededDemoPayload(row.raw));
+  return data.filter((row) => !isSeededDemoPayload(row.raw));
 }
 
 function sumImportedRows(uploads: UploadLike[]) {

@@ -17,8 +17,8 @@ export const REPORT_KINDS: { value: ReportKind; label: string; hint: string }[] 
   },
   {
     value: "total_cycle_time",
-    label: "Total Cycle Time",
-    hint: "File name must include total cycle time.",
+    label: "Invoice Cycle Time",
+    hint: "File name must include invoice cycle time or total cycle time.",
   },
   {
     value: "open_jobs",
@@ -47,7 +47,12 @@ export function identifyReportKindFromFileName(fileName: string): ReportKind | n
     return "ticket_qc";
   }
 
-  if (hasAll(words, ["total", "cycle", "time"]) || compact.includes("totalcycletime")) {
+  if (
+    hasAll(words, ["invoice", "cycle", "time"]) ||
+    hasAll(words, ["total", "cycle", "time"]) ||
+    compact.includes("invoicecycletime") ||
+    compact.includes("totalcycletime")
+  ) {
     return "total_cycle_time";
   }
 
@@ -80,7 +85,7 @@ export function isOpenJobsUpload(upload: { kind?: string | null; file_name?: str
 
 function legacyReportKindLabel(kind: string | null | undefined) {
   if (kind === "total_tickets") return "Total Tickets";
-  if (kind === "total_invoiced") return "Total Cycle Time";
+  if (kind === "total_invoiced") return "Invoice Cycle Time";
   if (kind === "open_jobs") return "Open Jobs";
   return kind ?? "Unknown";
 }

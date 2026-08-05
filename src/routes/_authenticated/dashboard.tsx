@@ -295,7 +295,7 @@ function Dashboard() {
             <AlertTriangle className="w-6 h-6 text-warning" />
             <div className="flex-1">
               <div className="font-medium">No data for this date range yet</div>
-              <div className="text-sm text-muted-foreground">Upload Active/Review/Final, Ticket QC, Total Cycle Time, or Open Jobs to populate KPIs.</div>
+              <div className="text-sm text-muted-foreground">Upload Active/Review/Final, Ticket QC, Invoice Cycle Time, or Open Jobs to populate KPIs.</div>
             </div>
             <Button onClick={() => nav({ to: "/uploads" })}>Go to Uploads</Button>
           </div>
