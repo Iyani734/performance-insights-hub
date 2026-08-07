@@ -79,6 +79,68 @@ function isExcelFile(file: File) {
   return /\.(xlsx|xls)$/i.test(file.name);
 }
 
+function requiresPairedFiles(kind: ReportKind) {
+  return kind === "ticket_qc" || kind === "ticket_quality";
+}
+
+function pairedFileKey(kind: ReportKind, file: File) {
+  if (kind === "ticket_qc") return identifyTicketQcStageFromFileName(file.name);
+  if (kind === "ticket_quality") return identifyTicketQualitySourceFromFileName(file.name);
+  return null;
+}
+
+function requiredPairKeys(kind: ReportKind) {
+  if (kind === "ticket_qc") return ["review", "final"];
+  if (kind === "ticket_quality") return ["errors", "total"];
+  return [];
+}
+
+function selectedPairKeys(files: File[], kind: ReportKind) {
+  return new Set(files.map((file) => pairedFileKey(kind, file)).filter(Boolean));
+}
+
+function hasRequiredPairedFiles(files: File[], kind: ReportKind) {
+  if (!requiresPairedFiles(kind)) return true;
+  const selected = selectedPairKeys(files, kind);
+  return requiredPairKeys(kind).every((key) => selected.has(key));
+}
+
+function missingPairedFileMessage(files: File[], kind: ReportKind) {
+  if (!requiresPairedFiles(kind) || hasRequiredPairedFiles(files, kind)) return null;
+  const selected = selectedPairKeys(files, kind);
+
+  if (kind === "ticket_qc") {
+    const missing = [
+      !selected.has("review") ? "TicketQC REVIEW" : null,
+      !selected.has("final") ? "TicketQC FINAL" : null,
+    ].filter(Boolean);
+    return `Add ${missing.join(" and ")} before uploading.`;
+  }
+
+  const missing = [
+    !selected.has("errors") ? "Ticket Quality Error" : null,
+    !selected.has("total") ? "TCR Total" : null,
+  ].filter(Boolean);
+  return `Add ${missing.join(" and ")} before uploading.`;
+}
+
+function fileIdentity(file: File) {
+  return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
+function mergeSelectedFiles(kind: ReportKind, current: File[], incoming: File[]) {
+  if (!requiresPairedFiles(kind)) return incoming.slice(0, 1);
+
+  const byKey = new Map<string, File>();
+  for (const file of current) {
+    byKey.set(pairedFileKey(kind, file) ?? fileIdentity(file), file);
+  }
+  for (const file of incoming) {
+    byKey.set(pairedFileKey(kind, file) ?? fileIdentity(file), file);
+  }
+  return Array.from(byKey.values());
+}
+
 function validateUploadSelection(files: File[], kind: ReportKind) {
   if (!files.length) throw new Error("Choose an Excel file before uploading.");
   if (files.some((file) => !isExcelFile(file))) throw new Error("Upload .xlsx or .xls files only.");
@@ -119,6 +181,14 @@ function validateUploadSelection(files: File[], kind: ReportKind) {
       }
       stages.add(source);
     }
+  }
+
+  if (kind === "ticket_qc" && !hasRequiredPairedFiles(files, kind)) {
+    throw new Error("Ticket QC requires two files: TicketQC REVIEW and TicketQC FINAL.");
+  }
+
+  if (kind === "ticket_quality" && !hasRequiredPairedFiles(files, kind)) {
+    throw new Error("Ticket Quality requires two files: Ticket Quality Error and TCR Total.");
   }
 }
 
@@ -597,10 +667,12 @@ function UploadsPage() {
   const fileError = files.some((selectedFile) => !isExcelFile(selectedFile))
     ? "Upload .xlsx or .xls files only."
     : null;
+  const pairedFileMessage = missingPairedFileMessage(files, kind);
   const uploadDisabled =
     upload.isPending ||
     files.length === 0 ||
     !!fileError ||
+    !hasRequiredPairedFiles(files, kind) ||
     !effectiveFrom ||
     !effectiveTo ||
     effectiveFrom > effectiveTo ||
@@ -663,7 +735,11 @@ function UploadsPage() {
               type="file"
               accept=".xlsx,.xls"
               multiple={kind === "ticket_qc" || kind === "ticket_quality"}
-              onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+              onChange={(e) => {
+                const incoming = Array.from(e.target.files ?? []);
+                setFiles((current) => mergeSelectedFiles(kind, current, incoming));
+                setFileInputKey((value) => value + 1);
+              }}
             />
             <p className="text-xs text-muted-foreground">
               Pick the date range this file's data covers. The header row is not counted as imported
@@ -675,6 +751,9 @@ function UploadsPage() {
                 : ""}
             </p>
             {fileError && <p className="text-xs text-destructive">{fileError}</p>}
+            {pairedFileMessage && (
+              <p className="text-xs text-warning">{pairedFileMessage}</p>
+            )}
           </div>
         </div>
         <div className="mt-6 flex items-center gap-3">
@@ -686,6 +765,19 @@ function UploadsPage() {
             <span className="text-sm text-muted-foreground">
               {files.map((selectedFile) => selectedFile.name).join(", ")}
             </span>
+          )}
+          {files.length > 0 && !upload.isPending && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setFiles([]);
+                setFileInputKey((value) => value + 1);
+              }}
+            >
+              Clear
+            </Button>
           )}
           {upload.isPending && (
             <span className="text-sm text-muted-foreground">
