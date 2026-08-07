@@ -82,7 +82,7 @@ function isExcelFile(file: File) {
 function validateUploadSelection(files: File[], kind: ReportKind) {
   if (!files.length) throw new Error("Choose an Excel file before uploading.");
   if (files.some((file) => !isExcelFile(file))) throw new Error("Upload .xlsx or .xls files only.");
-  if (kind !== "ticket_qc" && files.length > 1) {
+  if (kind !== "ticket_qc" && kind !== "ticket_quality" && files.length > 1) {
     throw new Error(`${reportKindLabel(kind)} accepts one file per upload.`);
   }
 
