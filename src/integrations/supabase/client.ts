@@ -65,6 +65,8 @@ function createUnavailableSupabaseClient() {
       }),
       signInWithPassword: async () => ({ data: { user: null, session: null }, error: new Error(missingSupabaseConfigMessage) }),
       signUp: async () => ({ data: { user: null, session: null }, error: new Error(missingSupabaseConfigMessage) }),
+      resetPasswordForEmail: async () => ({ data: {}, error: new Error(missingSupabaseConfigMessage) }),
+      updateUser: async () => ({ data: { user: null }, error: new Error(missingSupabaseConfigMessage) }),
       signOut: async () => ({ error: null }),
     },
     from: () => createEmptyQuery(),
