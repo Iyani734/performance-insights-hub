@@ -1,10 +1,12 @@
 export type ReportKind =
   | "active_review_final"
   | "ticket_qc"
+  | "ticket_quality"
   | "total_cycle_time"
   | "open_jobs";
 
 export type TicketQcStage = "review" | "final";
+export type TicketQualitySource = "errors" | "total";
 
 export const REPORT_KINDS: { value: ReportKind; label: string; hint: string }[] = [
   {
@@ -16,6 +18,11 @@ export const REPORT_KINDS: { value: ReportKind; label: string; hint: string }[] 
     value: "ticket_qc",
     label: "Ticket QC",
     hint: "Upload TicketQC REVIEW and TicketQC FINAL. Both are required before the KPI calculates.",
+  },
+  {
+    value: "ticket_quality",
+    label: "Ticket Quality",
+    hint: "Upload Ticket Quality Error and TCR Total. Both are required before the KPI calculates.",
   },
   {
     value: "total_cycle_time",
@@ -50,6 +57,15 @@ export function identifyReportKindFromFileName(fileName: string): ReportKind | n
   }
 
   if (
+    hasAll(words, ["ticket", "quality"]) ||
+    hasAll(words, ["tcr", "total"]) ||
+    compact.includes("ticketquality") ||
+    compact.includes("tcrtotal")
+  ) {
+    return "ticket_quality";
+  }
+
+  if (
     hasAll(words, ["invoice", "cycle", "time"]) ||
     hasAll(words, ["total", "cycle", "time"]) ||
     compact.includes("invoicecycletime") ||
@@ -62,6 +78,15 @@ export function identifyReportKindFromFileName(fileName: string): ReportKind | n
     return "open_jobs";
   }
 
+  return null;
+}
+
+export function identifyTicketQualitySourceFromFileName(fileName: string): TicketQualitySource | null {
+  const words = normalizedWords(fileName);
+  const compact = words.join("");
+
+  if (hasAll(words, ["tcr", "total"]) || compact.includes("tcrtotal")) return "total";
+  if (hasAll(words, ["ticket", "quality"]) || compact.includes("ticketquality")) return "errors";
   return null;
 }
 
@@ -97,6 +122,18 @@ export function isTicketQcReviewUpload(upload: { kind?: string | null; file_name
 
 export function isTicketQcFinalUpload(upload: { kind?: string | null; file_name?: string | null }) {
   return isTicketQcUpload(upload) && identifyTicketQcStageFromFileName(upload.file_name ?? "") === "final";
+}
+
+export function isTicketQualityUpload(upload: { kind?: string | null; file_name?: string | null }) {
+  return upload.kind === "ticket_quality" || identifyReportKindFromFileName(upload.file_name ?? "") === "ticket_quality";
+}
+
+export function isTicketQualityErrorUpload(upload: { kind?: string | null; file_name?: string | null }) {
+  return isTicketQualityUpload(upload) && identifyTicketQualitySourceFromFileName(upload.file_name ?? "") === "errors";
+}
+
+export function isTcrTotalUpload(upload: { kind?: string | null; file_name?: string | null }) {
+  return isTicketQualityUpload(upload) && identifyTicketQualitySourceFromFileName(upload.file_name ?? "") === "total";
 }
 
 export function isTotalCycleTimeUpload(upload: { kind?: string | null; file_name?: string | null }) {

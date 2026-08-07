@@ -205,8 +205,8 @@ function Dashboard() {
   const summary = useMemo(() => overallScore(rows), [rows]);
   const focus = useMemo(() => focusAreas(rows), [rows]);
 
-  const totals = autoQ.data?.totals ?? { tickets: 0, invoiced: 0, quality_issues: 0, qc_tickets: 0, qc_review_tickets: 0, qc_final_tickets: 0, cycle_time_rows: 0, voided: 0, active_tickets: 0, review_tickets: 0, final_edit_tickets: 0 };
-  const noData = !validRange || (totals.tickets === 0 && totals.qc_tickets === 0 && totals.cycle_time_rows === 0 && totals.invoiced === 0);
+  const totals = autoQ.data?.totals ?? { tickets: 0, invoiced: 0, quality_issues: 0, quality_total_tickets: 0, qc_tickets: 0, qc_review_tickets: 0, qc_final_tickets: 0, cycle_time_rows: 0, voided: 0, active_tickets: 0, review_tickets: 0, final_edit_tickets: 0 };
+  const noData = !validRange || (totals.tickets === 0 && totals.qc_tickets === 0 && totals.cycle_time_rows === 0 && totals.invoiced === 0 && totals.quality_issues === 0 && totals.quality_total_tickets === 0);
   const ticketQcTarget = targets.find((target) => target.kpi_key === "review_to_final_edit") ?? null;
 
   const [editingKpi, setEditingKpi] = useState<KpiTarget | null>(null);
@@ -514,9 +514,6 @@ function TicketQcStatCard({
           <div className="text-3xl font-display font-semibold mt-1">{value}</div>
           <div className="mt-2 text-xs text-muted-foreground">
             Target: <span className="font-semibold text-foreground">{target?.target_display ?? ">= 95%"}</span>
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            Final {finalRows.toLocaleString()} / Review {reviewRows.toLocaleString()} x 100
           </div>
         </div>
         <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center text-success">

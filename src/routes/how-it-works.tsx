@@ -50,10 +50,10 @@ const METRICS: MetricSpec[] = [
     key: "ticket_quality",
     label: "Ticket Quality",
     target: "< 3%",
-    source: "Manual entry or a future dedicated quality issue source",
-    formula: "quality issue count / total invoiced tickets x 100",
-    columns: ["Void Reason", "Driver Error", "Quality Issue"],
-    why: "The ARC metric is a quality-error rate, so lower is better. The current Active/Review/Final, QC, and Invoice Cycle Time files do not calculate this automatically.",
+    source: "Ticket Quality and TCR Total exports. File names must include Ticket Quality or TCR Total.",
+    formula: "Ticket Quality error rows / TCR Total rows x 100",
+    columns: ["Ticket Quality data rows", "TCR Total data rows"],
+    why: "The ARC metric is a quality-error rate, so lower is better. The dashboard waits until both source files exist for the selected date range.",
   },
   {
     key: "dispatch_responsiveness",
@@ -133,7 +133,7 @@ function HowItWorks() {
             <div className="font-medium">1. Upload the exports</div>
             <p className="text-sm text-muted-foreground mt-1">
               Use file names containing active review final, TicketQC REVIEW, TicketQC FINAL,
-              invoice cycle time, total cycle time, or open jobs so rows go into the right calculation group.
+              Ticket Quality, TCR Total, invoice cycle time, total cycle time, or open jobs so rows go into the right calculation group.
             </p>
           </Card>
           <Card className="p-5">
@@ -190,6 +190,9 @@ function HowItWorks() {
                 </li>
                 <li>
                   Ticket QC uses TicketQC FINAL rows divided by TicketQC REVIEW rows
+                </li>
+                <li>
+                  Ticket Quality uses Ticket Quality rows divided by TCR Total rows
                 </li>
               </ul>
             </div>

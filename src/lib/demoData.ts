@@ -180,6 +180,7 @@ export type DemoUploadMetrics = {
   reviewToFinalEdit?: number | null;
   ticketQuality?: number | null;
   qualityIssues?: number;
+  qualityTotalTickets?: number;
   invoiceCycleTime?: number | null;
 };
 
@@ -253,6 +254,7 @@ export function demoAutoKpis(week: string) {
       tickets: 126 - index * 4,
       invoiced: 118 - index * 3,
       quality_issues: 2 + index,
+      quality_total_tickets: 118 - index * 3,
       qc_tickets: 279 - index * 6,
       qc_review_tickets: 288 - index * 5,
       qc_final_tickets: 279 - index * 6,
@@ -346,6 +348,7 @@ function generatedDemoAutoKpisForRange(range: DateRangeValue) {
         tickets: totals.tickets + (126 - index * 4),
         invoiced: totals.invoiced + (118 - index * 3),
         quality_issues: totals.quality_issues + (2 + index),
+        quality_total_tickets: totals.quality_total_tickets + (118 - index * 3),
         qc_tickets: totals.qc_tickets + (279 - index * 6),
         qc_review_tickets: totals.qc_review_tickets + (288 - index * 5),
         qc_final_tickets: totals.qc_final_tickets + (279 - index * 6),
@@ -359,6 +362,7 @@ function generatedDemoAutoKpisForRange(range: DateRangeValue) {
         tickets: 0,
         invoiced: 0,
         quality_issues: 0,
+        quality_total_tickets: 0,
         qc_tickets: 0,
         qc_review_tickets: 0,
         qc_final_tickets: 0,
@@ -388,11 +392,16 @@ function localDemoAutoKpisForRange(range: DateRangeValue) {
       totals.qcFinalTickets += m.qcFinalTickets ?? 0;
       totals.invoiced += m.invoiced ?? 0;
       totals.invoiceQualityIssues += m.invoiceQualityIssues ?? 0;
+      totals.qualityIssues += m.qualityIssues ?? 0;
+      totals.qualityTotalTickets += m.qualityTotalTickets ?? 0;
       totals.invoiceCycleDaysTotal += m.invoiceCycleDaysTotal ?? 0;
       totals.invoiceCycleCount += m.invoiceCycleCount ?? 0;
       const reviewValue = m.reviewToFinalEdit ?? null;
       const qualityValue =
         m.ticketQuality ??
+        (m.qualityTotalTickets != null && m.qualityTotalTickets > 0 && m.qualityIssues != null
+          ? ((m.qualityIssues ?? 0) / m.qualityTotalTickets) * 100
+          : null) ??
         (m.invoiced != null && m.invoiced > 0 && m.invoiceQualityIssues != null
           ? ((m.invoiceQualityIssues ?? 0) / m.invoiced) * 100
           : null);
@@ -409,6 +418,7 @@ function localDemoAutoKpisForRange(range: DateRangeValue) {
         totals.invoiceCycleValues.push(invoiceCycleValue);
       totals.hasTickets = totals.hasTickets || m.tickets != null;
       totals.hasInvoiced = totals.hasInvoiced || m.invoiced != null;
+      totals.hasQualitySource = totals.hasQualitySource || m.qualityIssues != null || m.qualityTotalTickets != null;
       return totals;
     },
     {
@@ -420,6 +430,8 @@ function localDemoAutoKpisForRange(range: DateRangeValue) {
       finalEditTickets: 0,
       invoiced: 0,
       invoiceQualityIssues: 0,
+      qualityIssues: 0,
+      qualityTotalTickets: 0,
       invoiceCycleDaysTotal: 0,
       invoiceCycleCount: 0,
       qcTickets: 0,
@@ -430,6 +442,7 @@ function localDemoAutoKpisForRange(range: DateRangeValue) {
       invoiceCycleValues: [] as number[],
       hasTickets: false,
       hasInvoiced: false,
+      hasQualitySource: false,
     },
   );
 
@@ -447,12 +460,15 @@ function localDemoAutoKpisForRange(range: DateRangeValue) {
     totals: {
       tickets: metrics.tickets,
       invoiced: metrics.invoiced,
+      quality_total_tickets: metrics.qualityTotalTickets,
       qc_tickets: metrics.qcFinalTickets || metrics.qcTickets,
       qc_review_tickets: metrics.qcReviewTickets,
       qc_final_tickets: metrics.qcFinalTickets,
       cycle_time_rows: metrics.invoiced,
       quality_issues: metrics.hasInvoiced
         ? metrics.invoiceQualityIssues
+        : metrics.hasQualitySource
+          ? metrics.qualityIssues
         : metrics.qualityValues.length
           ? metrics.invoiceQualityIssues + metrics.ticketVoids
           : metrics.ticketVoids,
@@ -463,6 +479,7 @@ function localDemoAutoKpisForRange(range: DateRangeValue) {
     },
     hasTickets: metrics.hasTickets,
     hasInvoiced: metrics.hasInvoiced,
+    hasQualitySource: metrics.hasQualitySource,
   };
 }
 
@@ -478,9 +495,12 @@ export function demoAutoKpisForRange(range: DateRangeValue) {
       tickets: local.hasTickets ? local.totals.tickets : generated.totals.tickets,
       invoiced: local.hasInvoiced ? local.totals.invoiced : generated.totals.invoiced,
       quality_issues:
-        local.hasInvoiced || local.hasTickets
+        local.hasInvoiced || local.hasTickets || local.hasQualitySource
           ? local.totals.quality_issues
           : generated.totals.quality_issues,
+      quality_total_tickets: local.hasQualitySource
+        ? local.totals.quality_total_tickets
+        : generated.totals.quality_total_tickets,
       qc_tickets:
         local.review_to_final_edit != null ? local.totals.qc_tickets : generated.totals.qc_tickets,
       qc_review_tickets:
@@ -538,15 +558,18 @@ export function demoKpiValuesWithLocal() {
       });
     }
     if (
-      m.invoiced != null &&
-      m.invoiced > 0 &&
-      (m.ticketQuality != null || m.invoiceQualityIssues != null)
+      ((m.invoiced != null && m.invoiced > 0 && (m.ticketQuality != null || m.invoiceQualityIssues != null)) ||
+        (m.qualityTotalTickets != null && m.qualityTotalTickets > 0 && m.qualityIssues != null))
     ) {
       rows.push({
         id: `${upload.id}-quality`,
         kpi_key: "ticket_quality",
         week_start,
-        actual: m.ticketQuality ?? ((m.invoiceQualityIssues ?? 0) / m.invoiced) * 100,
+        actual:
+          m.ticketQuality ??
+          (m.qualityTotalTickets != null && m.qualityTotalTickets > 0 && m.qualityIssues != null
+            ? ((m.qualityIssues ?? 0) / m.qualityTotalTickets) * 100
+            : ((m.invoiceQualityIssues ?? 0) / (m.invoiced ?? 1)) * 100),
         source: "demo-upload",
         entered_by: null,
         created_at,

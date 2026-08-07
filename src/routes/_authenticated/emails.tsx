@@ -15,7 +15,6 @@ import {
   Download,
   Eye,
   RefreshCw,
-  ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import { downloadXlsx } from "@/lib/parse";
@@ -141,7 +140,7 @@ function EmailsPage() {
           const jobEmail = String(job.customer_email ?? "").trim().toLowerCase();
           return !!customerEmail && customerEmail === jobEmail;
         });
-        const sentEmailJob = history.find((job: any) => job.status === "sent") ?? null;
+        const sentEmailJob = history.find(isSentEmailJob) ?? null;
         const latestEmailJob = history[0] ?? null;
         const deliveryStatus: EmailRow["deliveryStatus"] = sentEmailJob
           ? "sent"
@@ -329,17 +328,6 @@ function EmailsPage() {
         <SnapCard label="Pending" value={pendingCount} accent="text-warning" />
         <SnapCard label="Needs setup" value={missingEmail} accent="text-destructive" />
       </div>
-
-      <Card className="p-4 flex items-start gap-3 bg-success/10 border-success/30">
-        <ShieldCheck className="w-5 h-5 text-success flex-shrink-0 mt-0.5" />
-        <div className="text-sm">
-          <div className="font-medium">Resend sending enabled</div>
-          <div className="text-muted-foreground">
-            Configure RESEND_API_KEY and RESEND_FROM_EMAIL in your hosting provider. Bulk Send only sends
-            customers that do not already have a Sent log for this week.
-          </div>
-        </div>
-      </Card>
 
       <Card>
         <div className="px-6 py-4 border-b flex items-center justify-between flex-wrap gap-2">
@@ -628,6 +616,10 @@ function DeliveryStatus({ status, error }: { status: string; error?: string | nu
     return <span className="text-destructive text-xs font-medium">Not on file</span>;
   }
   return <span className="text-success text-xs font-medium">Ready</span>;
+}
+
+function isSentEmailJob(job: any) {
+  return job?.status === "sent" || !!job?.sent_at;
 }
 
 function SnapCard({ label, value, accent }: { label: string; value: number; accent: string }) {

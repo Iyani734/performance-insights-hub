@@ -188,7 +188,7 @@ function SidebarInner({
           <div className="border-t border-sidebar-border/70 pt-3 text-[11px] leading-snug text-sidebar-foreground/55">
             Service provided by{" "}
             <a
-              href="https://triaconsultingsus.com"
+              href="https://triaconsultingus.com/"
               target="_blank"
               rel="noreferrer"
               className="font-medium text-sidebar-foreground/80 underline-offset-4 hover:text-sidebar-foreground hover:underline"
@@ -198,7 +198,7 @@ function SidebarInner({
           </div>
         ) : (
           <a
-            href="https://triaconsultingsus.com"
+            href="https://triaconsultingus.com/"
             target="_blank"
             rel="noreferrer"
             title="Service provided by TRIA"

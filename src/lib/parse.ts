@@ -1,5 +1,7 @@
 import * as XLSX from "xlsx";
 
+const DEFAULT_WORKBOOK_PASSWORD = "ARC2026barricades";
+
 export type ParsedTicket = {
   ticket_no?: string;
   ticket_id?: string;
@@ -25,6 +27,12 @@ export type ParseStats = {
   skipped: number;
   errors: number;
   error_details: { row: number; reason: string }[];
+};
+
+export type TicketQualityCountSource = "errors" | "total";
+
+export type ParsedCountRow = {
+  raw: Record<string, any>;
 };
 
 function toISODate(v: any): string | null {
@@ -65,7 +73,7 @@ function sheetRowCount(sheet: XLSX.WorkSheet): number | undefined {
 
 export async function readWorkbook(file: File): Promise<XLSX.WorkBook> {
   const buf = await file.arrayBuffer();
-  return XLSX.read(buf, { cellDates: true });
+  return XLSX.read(buf, { cellDates: true, password: DEFAULT_WORKBOOK_PASSWORD });
 }
 
 export function parseTicketsSheet(wb: XLSX.WorkBook): { rows: ParsedTicket[]; stats: ParseStats } {
@@ -109,6 +117,51 @@ export function parseTicketsSheet(wb: XLSX.WorkBook): { rows: ParsedTicket[]; st
   return { rows, stats };
 }
 
+export function parseTicketQualityCountSheet(
+  wb: XLSX.WorkBook,
+  source: TicketQualityCountSource,
+): { rows: ParsedCountRow[]; stats: ParseStats } {
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json<any[]>(sheet, {
+    header: 1,
+    defval: null,
+    blankrows: false,
+  });
+  const headerIndex = findCountHeaderIndex(rows, source);
+  const headers = (rows[headerIndex] ?? []).map((cell, index) => s(cell) ?? `Column ${index + 1}`);
+  const dataRows = rows.slice(headerIndex + 1);
+  const stats: ParseStats = {
+    source_rows: dataRows.length,
+    sheet_rows: sheetRowCount(sheet),
+    imported: 0,
+    skipped: 0,
+    errors: 0,
+    error_details: [],
+  };
+  const parsedRows: ParsedCountRow[] = [];
+
+  dataRows.forEach((row, index) => {
+    try {
+      if (!rowHasAnyValue(row)) {
+        stats.skipped++;
+        return;
+      }
+      const record = rowToRecord(headers, row);
+      if (!isCountableRow(record, row, source)) {
+        stats.skipped++;
+        return;
+      }
+      parsedRows.push({ raw: record });
+      stats.imported++;
+    } catch (e: any) {
+      stats.errors++;
+      stats.error_details.push({ row: headerIndex + index + 2, reason: e?.message ?? "parse error" });
+    }
+  });
+
+  return { rows: parsedRows, stats };
+}
+
 function hasHeader(row: Record<string, any>, header: string) {
   const target = normalizeHeader(header);
   return Object.keys(row).some((key) => normalizeHeader(key) === target);
@@ -119,6 +172,53 @@ function normalizeHeader(value: string) {
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "");
+}
+
+function findCountHeaderIndex(rows: any[][], source: TicketQualityCountSource) {
+  const expected =
+    source === "total"
+      ? ["ticketid", "ticket", "job"]
+      : ["name", "infractiontype", "ticketnumber"];
+
+  const found = rows.findIndex((row) => {
+    const normalized = row.map((cell) => normalizeHeader(String(cell ?? "")));
+    return expected.some((header) => normalized.includes(header));
+  });
+
+  return found >= 0 ? found : 0;
+}
+
+function rowToRecord(headers: string[], row: any[]) {
+  return row.reduce<Record<string, any>>((record, value, index) => {
+    record[headers[index] ?? `Column ${index + 1}`] = value;
+    return record;
+  }, {});
+}
+
+function rowHasAnyValue(row: any[]) {
+  return row.some((value) => hasCellValue(value));
+}
+
+function hasCellValue(value: unknown) {
+  return String(value ?? "").trim() !== "";
+}
+
+function isCountableRow(record: Record<string, any>, row: any[], source: TicketQualityCountSource) {
+  if (source === "total") {
+    return hasAnyNormalizedRecordValue(record, ["ticketid", "ticket", "ticketno", "job", "jobno"]) || rowHasAnyValue(row);
+  }
+
+  return (
+    hasAnyNormalizedRecordValue(record, ["name"]) &&
+    hasAnyNormalizedRecordValue(record, ["ticketnumber", "infractiontype", "infractionsummary"])
+  );
+}
+
+function hasAnyNormalizedRecordValue(record: Record<string, any>, normalizedKeys: string[]) {
+  const entries = Object.entries(record);
+  return normalizedKeys.some((wanted) =>
+    entries.some(([key, value]) => normalizeHeader(key).includes(wanted) && hasCellValue(value)),
+  );
 }
 
 export type ParsedOpenJob = {

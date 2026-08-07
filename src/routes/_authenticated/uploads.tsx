@@ -35,7 +35,13 @@ import {
   User as UserIcon,
 } from "lucide-react";
 import { formatWeek } from "@/lib/kpi";
-import { readWorkbook, parseTicketsSheet, parseOpenJobsSheet, type ParseStats } from "@/lib/parse";
+import {
+  readWorkbook,
+  parseTicketsSheet,
+  parseOpenJobsSheet,
+  parseTicketQualityCountSheet,
+  type ParseStats,
+} from "@/lib/parse";
 import { useAuth } from "@/lib/useAuth";
 import { useDemoMode } from "@/lib/demoMode";
 import { isSeededDemoUpload } from "@/lib/liveData";
@@ -47,6 +53,7 @@ import {
 } from "@/lib/kpiRules";
 import {
   identifyReportKindFromFileName,
+  identifyTicketQualitySourceFromFileName,
   identifyTicketQcStageFromFileName,
   REPORT_KINDS,
   reportKindHint,
@@ -84,7 +91,7 @@ function validateUploadSelection(files: File[], kind: ReportKind) {
     const inferredKind = identifyReportKindFromFileName(file.name);
     if (!inferredKind) {
       throw new Error(
-        "The file name must include active review final, TicketQC REVIEW, TicketQC FINAL, invoice cycle time, total cycle time, or open jobs.",
+    "The file name must include active review final, TicketQC REVIEW, TicketQC FINAL, ticket quality, TCR total, invoice cycle time, total cycle time, or open jobs.",
       );
     }
     if (inferredKind !== kind) {
@@ -101,6 +108,16 @@ function validateUploadSelection(files: File[], kind: ReportKind) {
         throw new Error("Upload only one TicketQC REVIEW file and one TicketQC FINAL file at a time.");
       }
       stages.add(stage);
+    }
+    if (kind === "ticket_quality") {
+      const source = identifyTicketQualitySourceFromFileName(file.name);
+      if (!source) {
+        throw new Error("Ticket Quality file names must include Ticket Quality or TCR Total.");
+      }
+      if (stages.has(source)) {
+        throw new Error("Upload only one Ticket Quality Error file and one TCR Total file at a time.");
+      }
+      stages.add(source);
     }
   }
 }
@@ -162,6 +179,14 @@ function buildDemoUploadMetrics(
       qcReviewTickets: stage === "review" ? rows.length : undefined,
       qcFinalTickets: stage === "final" ? rows.length : undefined,
       reviewToFinalEdit: null,
+    };
+  }
+  if (kind === "ticket_quality") {
+    const source = identifyTicketQualitySourceFromFileName(fileName);
+    return {
+      qualityIssues: source === "errors" ? rows.length : undefined,
+      qualityTotalTickets: source === "total" ? rows.length : undefined,
+      ticketQuality: null,
     };
   }
   return {
@@ -251,7 +276,13 @@ function UploadsPage() {
         if (demoMode) {
           const wb = await workbookPromise;
           setUploadStage(`Checking rows in ${selectedFile.name}...`);
-          const parsed = kind === "open_jobs" ? parseOpenJobsSheet(wb) : parseTicketsSheet(wb);
+          const qualitySource = identifyTicketQualitySourceFromFileName(selectedFile.name);
+          const parsed =
+            kind === "open_jobs"
+              ? parseOpenJobsSheet(wb)
+              : kind === "ticket_quality"
+                ? parseTicketQualityCountSheet(wb, qualitySource ?? "errors")
+                : parseTicketsSheet(wb);
           const dt = Math.round(performance.now() - t0);
           return {
             stats: parsed.stats,
@@ -288,7 +319,13 @@ function UploadsPage() {
         try {
           const wb = await workbookPromise;
           setUploadStage(`Checking rows in ${selectedFile.name}...`);
-          parsed = kind === "open_jobs" ? parseOpenJobsSheet(wb) : parseTicketsSheet(wb);
+          const qualitySource = identifyTicketQualitySourceFromFileName(selectedFile.name);
+          parsed =
+            kind === "open_jobs"
+              ? parseOpenJobsSheet(wb)
+              : kind === "ticket_quality"
+                ? parseTicketQualityCountSheet(wb, qualitySource ?? "errors")
+                : parseTicketsSheet(wb);
         } catch (error) {
           const { error: storageError } = await storageUpload;
           if (!storageError) await supabase.storage.from("report-files").remove([filePath]);
@@ -362,7 +399,7 @@ function UploadsPage() {
                 }
               }
             }
-          } else if (kind !== "ticket_qc") {
+          } else if (kind !== "ticket_qc" && kind !== "ticket_quality") {
             const tKind = kind === "active_review_final" ? "tickets" : "invoiced";
             const payload = parsed.rows.map((r) => ({
               ...r,
@@ -397,7 +434,9 @@ function UploadsPage() {
             setUploadStage("Calculating dashboard metrics...");
             const { computeAutoKpisForRange } = await import("@/lib/kpi");
             const auto = await computeAutoKpisForRange(effectiveFrom, effectiveTo);
-            ticketQcWaiting = kind === "ticket_qc" && auto.review_to_final_edit == null;
+            ticketQcWaiting =
+              (kind === "ticket_qc" && auto.review_to_final_edit == null) ||
+              (kind === "ticket_quality" && auto.ticket_quality == null);
             const upserts = [
               { kpi_key: "review_to_final_edit", actual: auto.review_to_final_edit },
               { kpi_key: "ticket_quality", actual: auto.ticket_quality },
@@ -467,7 +506,7 @@ function UploadsPage() {
       toast.success(rowSummary);
       for (const warning of Array.from(new Set(customerSyncWarnings))) toast.warning(warning);
       if (ticketQcWaiting) {
-        toast.warning("Ticket QC imported. The KPI will calculate after both TicketQC REVIEW and TicketQC FINAL exist for this date range.");
+        toast.warning("Upload imported. The KPI will calculate after both required source files exist for this date range.");
       }
       setUploadStage("");
       setFiles([]);
@@ -623,7 +662,7 @@ function UploadsPage() {
               key={fileInputKey}
               type="file"
               accept=".xlsx,.xls"
-              multiple={kind === "ticket_qc"}
+              multiple={kind === "ticket_qc" || kind === "ticket_quality"}
               onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
             />
             <p className="text-xs text-muted-foreground">
@@ -631,6 +670,8 @@ function UploadsPage() {
               data.
               {kind === "ticket_qc"
                 ? " Ticket QC can accept TicketQC REVIEW and TicketQC FINAL together, or one at a time."
+                : kind === "ticket_quality"
+                  ? " Ticket Quality can accept Ticket Quality Error and TCR Total together, or one at a time."
                 : ""}
             </p>
             {fileError && <p className="text-xs text-destructive">{fileError}</p>}

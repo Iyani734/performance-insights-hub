@@ -618,6 +618,7 @@ export type Database = {
         | "total_invoiced"
         | "active_review_final"
         | "ticket_qc"
+        | "ticket_quality"
         | "total_cycle_time"
         | "open_jobs"
       ticket_kind: "tickets" | "invoiced"
@@ -754,6 +755,7 @@ export const Constants = {
         "total_invoiced",
         "active_review_final",
         "ticket_qc",
+        "ticket_quality",
         "total_cycle_time",
         "open_jobs",
       ],

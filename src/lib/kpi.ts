@@ -10,6 +10,9 @@ import {
   isTicketQcFinalUpload,
   isTicketQcReviewUpload,
   isTicketQcUpload,
+  isTicketQualityErrorUpload,
+  isTicketQualityUpload,
+  isTcrTotalUpload,
   isTotalCycleTimeUpload,
 } from "@/lib/reportTypes";
 import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
@@ -54,17 +57,31 @@ export function formatKpi(actual: number | null | undefined, t: KpiTarget): stri
 }
 
 export function normalizeKpiTarget(target: KpiTarget): KpiTarget {
-  if (target.kpi_key !== "review_to_final_edit") return target;
-  return {
-    ...target,
-    label: "Tickets QC'd - Review to Final Edit",
-    unit: "%",
-    direction: "higher_is_better",
-    green_min: 95,
-    yellow_min: 85,
-    target_display: ">= 95%",
-    auto: true,
-  };
+  if (target.kpi_key === "review_to_final_edit") {
+    return {
+      ...target,
+      label: "Tickets QC'd - Review to Final Edit",
+      unit: "%",
+      direction: "higher_is_better",
+      green_min: 95,
+      yellow_min: 85,
+      target_display: ">= 95%",
+      auto: true,
+    };
+  }
+  if (target.kpi_key === "ticket_quality") {
+    return {
+      ...target,
+      label: "Ticket Quality",
+      unit: "%",
+      direction: "lower_is_better",
+      green_min: 3,
+      yellow_min: 5,
+      target_display: "< 3%",
+      auto: true,
+    };
+  }
+  return target;
 }
 
 export function normalizeKpiTargets(targets: KpiTarget[]) {
@@ -98,6 +115,7 @@ export async function computeAutoKpisForRange(from: string, to: string) {
   const uploads = await fetchUploadsForRange(from, to);
   const activeUploads = uploads.filter(isActiveReviewFinalUpload);
   const qcUploads = uploads.filter(isTicketQcUpload);
+  const qualityUploads = uploads.filter(isTicketQualityUpload);
   const cycleUploads = uploads.filter(isTotalCycleTimeUpload);
 
   const [tickets, cycleRows] = await Promise.all([
@@ -107,17 +125,19 @@ export async function computeAutoKpisForRange(from: string, to: string) {
 
   const statusMatches = (status: unknown, value: string) => normalizeTicketStatus(status) === value;
   const ticketQc = calculateTicketQcReviewToFinal(qcUploads);
+  const ticketQuality = calculateTicketQualityFromUploads(qualityUploads);
   const totalCycleTime = calculateTotalCycleTime(cycleRows);
 
   return {
     review_to_final_edit: ticketQc.actual,
-    ticket_quality: null,
+    ticket_quality: ticketQuality.actual,
     invoice_cycle_time: totalCycleTime,
     dispatch_completion: null,
     totals: {
       tickets: tickets.length,
       invoiced: cycleRows.length,
-      quality_issues: 0,
+      quality_issues: ticketQuality.errorRows,
+      quality_total_tickets: ticketQuality.totalRows,
       qc_tickets: ticketQc.finalRows,
       qc_review_tickets: ticketQc.reviewRows,
       qc_final_tickets: ticketQc.finalRows,
@@ -188,6 +208,19 @@ function calculateTicketQcReviewToFinal(uploads: UploadLike[]) {
     reviewRows,
     finalRows,
     actual: reviewUpload && finalUpload && reviewRows > 0 ? (finalRows / reviewRows) * 100 : null,
+  };
+}
+
+function calculateTicketQualityFromUploads(uploads: UploadLike[]) {
+  const errorUpload = latestUpload(uploads.filter(isTicketQualityErrorUpload));
+  const totalUpload = latestUpload(uploads.filter(isTcrTotalUpload));
+  const errorRows = errorUpload ? sumImportedRows([errorUpload]) : 0;
+  const totalRows = totalUpload ? sumImportedRows([totalUpload]) : 0;
+
+  return {
+    errorRows,
+    totalRows,
+    actual: errorUpload && totalUpload && totalRows > 0 ? (errorRows / totalRows) * 100 : null,
   };
 }
 

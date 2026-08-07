@@ -28,20 +28,20 @@ const METRICS: MetricDefinition[] = [
     owner: "Dispatch/Drivers",
     cadence: "Monthly",
     target: "< 3%",
-    source: "Manual entry or a future dedicated quality issue source",
-    formula: "Quality issue count / total invoiced tickets x 100.",
-    columns: ["Void Reason", "Driver Error", "Quality Issue"],
-    note: "Lower is better. This is not calculated from Active/Review/Final, QC, or Invoice Cycle Time uploads until a dedicated quality issue file is supplied.",
+    source: "Ticket Quality and TCR Total uploads. File names must include Ticket Quality or TCR Total.",
+    formula: "Ticket Quality error rows / TCR Total rows x 100.",
+    columns: ["Ticket Quality: data rows", "TCR Total: data rows"],
+    note: "Lower is better. The sample files calculate as 14 Ticket Quality rows / 1,246 TCR Total rows = 1.1%.",
   },
   {
     label: "Quality Issues",
     owner: "Dispatch/Drivers",
     cadence: "Monthly",
     target: "Supporting count",
-    source: "Same source used for Ticket Quality",
-    formula: "Count rows flagged as billing/ticket quality issues.",
-    columns: ["Void Reason", "Driver Error", "Quality Issue"],
-    note: "This is the numerator behind Ticket Quality. Enter it manually until a dedicated quality issue file is supplied.",
+    source: "Ticket Quality upload. The file name must include Ticket Quality.",
+    formula: "Count imported data rows in the Ticket Quality file.",
+    columns: ["Ticket Quality: data rows"],
+    note: "This is the numerator behind Ticket Quality.",
   },
   {
     label: "Invoice Cycle Time (Final Edit to Invoice)",
@@ -129,8 +129,8 @@ export function MetricCalculationGuide() {
           </div>
           <p className="mt-2 text-sm text-muted-foreground">
             The file name determines the calculation. Use names containing active review final,
-            TicketQC REVIEW, TicketQC FINAL, invoice cycle time, total cycle time, or open jobs;
-            the selected report type must match the file name.
+            TicketQC REVIEW, TicketQC FINAL, Ticket Quality, TCR Total, invoice cycle time,
+            total cycle time, or open jobs; the selected report type must match the file name.
           </p>
         </div>
       </section>
