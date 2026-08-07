@@ -21,17 +21,58 @@ The build creates:
 
 Use these settings in cPanel `Setup Node.js App`:
 
-- Node.js version: `22.12.0` or newer
+- Node.js version: `22.12.0` or newer. The `22.23.0` option in cPanel is OK.
 - Application mode: `Production`
-- Application root: the folder where you upload this project
-- Application URL: your domain or subdomain
+- Application root: `arcbarricadesportal.com` if that is the folder you selected in File Manager
+- Application URL: `arcbarricadesportal.com`
 - Application startup file: `app.js`
 - Startup command: `npm start`
+
+Do not set the application root to `.output/public`. That folder only contains static assets.
+
+## What To Upload
+
+Recommended upload if Truehost can run commands:
+
+- `app.js`
+- `package.json`
+- `package-lock.json`
+- `vite.config.ts`
+- `tsconfig.json`
+- `components.json`
+- `eslint.config.js`
+- `public/`
+- `src/`
+- `supabase/`
+- `.env.example`
+- `TRUEHOST_NODE_SETUP.md`
+
+Do not upload:
+
+- `.env`
+- `node_modules/`
+- `.output/` if you are going to build on Truehost
+- `.git/`
+
+Then run:
+
+```bash
+npm install --include=dev
+npm run build
+```
+
+Alternative upload if you build locally first:
+
+- `app.js`
+- `package.json`
+- the full `.output/` folder, including both `.output/server` and `.output/public`
+
+Do not upload only `.output/public`; the app will not render correctly without the Node server.
 
 After uploading the project:
 
 ```bash
-npm install
+npm install --include=dev
 npm run build
 npm start
 ```

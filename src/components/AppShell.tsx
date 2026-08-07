@@ -183,6 +183,30 @@ function SidebarInner({
             <LogOut className="w-4 h-4" />
           </Button>
         )}
+
+        {!collapsed ? (
+          <div className="border-t border-sidebar-border/70 pt-3 text-[11px] leading-snug text-sidebar-foreground/55">
+            Service provided by{" "}
+            <a
+              href="https://triaconsultingsus.com"
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium text-sidebar-foreground/80 underline-offset-4 hover:text-sidebar-foreground hover:underline"
+            >
+              TRIA
+            </a>
+          </div>
+        ) : (
+          <a
+            href="https://triaconsultingsus.com"
+            target="_blank"
+            rel="noreferrer"
+            title="Service provided by TRIA"
+            className="block rounded-md border-t border-sidebar-border/70 pt-3 text-center text-[10px] font-semibold tracking-wide text-sidebar-foreground/60 hover:text-sidebar-foreground"
+          >
+            TRIA
+          </a>
+        )}
       </div>
     </div>
   );
