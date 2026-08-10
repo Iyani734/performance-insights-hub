@@ -4,7 +4,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import {
   Mail,
@@ -40,12 +43,30 @@ type EmailRow = {
   canSend: boolean;
 };
 
+type SendRequest = {
+  customerIds?: string[];
+  subject?: string;
+  message?: string;
+};
+
+const DEFAULT_EMAIL_SUBJECT_TEMPLATE = "Open Jobs Report - {{customer_name}} - Week of {{week}}";
+const DEFAULT_EMAIL_MESSAGE_TEMPLATE = [
+  "Hi {{customer_name}} team,",
+  "",
+  "Please find attached your Open Jobs report for the week of {{week}}.",
+  "There are {{job_count}} open jobs included.",
+].join("\n");
+
 function EmailsPage() {
   const qc = useQueryClient();
   const { user } = useAuth();
   const demoMode = useDemoMode();
   const [week, setWeek] = useState<string | null>(null);
   const [preview, setPreview] = useState<EmailRow | null>(null);
+  const [draftSubject, setDraftSubject] = useState("");
+  const [draftMessage, setDraftMessage] = useState("");
+  const [bulkSubject, setBulkSubject] = useState(DEFAULT_EMAIL_SUBJECT_TEMPLATE);
+  const [bulkMessage, setBulkMessage] = useState(DEFAULT_EMAIL_MESSAGE_TEMPLATE);
   const [confirmBulkOpen, setConfirmBulkOpen] = useState(false);
 
   const weeksQ = useQuery({
@@ -212,10 +233,17 @@ function EmailsPage() {
   });
 
   const sendEmails = useMutation({
-    mutationFn: async (customerIds?: string[]) => {
+    mutationFn: async (request: SendRequest = {}) => {
       if (!w) throw new Error("Select a week first");
       if (demoMode) throw new Error("Email sending is disabled in demo mode");
-      return sendOpenJobsEmails({ data: { weekStart: w, customerIds } });
+      return sendOpenJobsEmails({
+        data: {
+          weekStart: w,
+          customerIds: request.customerIds,
+          customSubject: cleanComposerText(request.subject),
+          customMessage: cleanComposerText(request.message),
+        },
+      });
     },
     onSuccess: (result) => {
       toast.success(`Sent ${result.sent}; skipped ${result.skipped}; failed ${result.failed}`);
@@ -257,14 +285,20 @@ function EmailsPage() {
     },
   });
 
-  function sendOne(row: EmailRow) {
+  function openPreview(row: EmailRow) {
+    setPreview(row);
+    setDraftSubject(w ? subjectFor(row.name, w) : "");
+    setDraftMessage(w ? defaultMessageFor(row.name, w, row.jobs.length) : "");
+  }
+
+  function sendOne(row: EmailRow, message?: SendRequest) {
     if (!row.customer?.id) return;
-    sendEmails.mutate([row.customer.id]);
+    sendEmails.mutate({ ...message, customerIds: [row.customer.id] });
   }
 
   function bulkSend() {
     const ids = sendableRows.map((row) => row.customer?.id).filter((id): id is string => !!id);
-    sendEmails.mutate(ids);
+    sendEmails.mutate({ customerIds: ids, subject: bulkSubject, message: bulkMessage });
   }
 
   function downloadReport(row: EmailRow) {
@@ -370,7 +404,7 @@ function EmailsPage() {
                     <DeliveryStatus status={row.deliveryStatus} error={row.latestEmailJob?.error} />
                   </td>
                   <td className="px-4 py-3 text-right whitespace-nowrap space-x-1">
-                    <Button size="sm" variant="ghost" onClick={() => setPreview(row)} title="Preview">
+                    <Button size="sm" variant="ghost" onClick={() => openPreview(row)} title="Preview">
                       <Eye className="w-4 h-4" />
                     </Button>
                     <Button size="sm" variant="ghost" onClick={() => downloadReport(row)} title="Download">
@@ -385,7 +419,7 @@ function EmailsPage() {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => sendOne(row)}
+                        onClick={() => openPreview(row)}
                         disabled={!row.canSend || sendEmails.isPending}
                       >
                         <Send className="w-4 h-4 mr-1" />
@@ -479,6 +513,28 @@ function EmailsPage() {
               {sendableRows.length === 1 ? "" : "s"} for {w ? formatWeek(w) : "the selected week"}.
             </p>
             <p>Customers already marked Sent will be skipped automatically.</p>
+            <div className="space-y-3 pt-2 text-foreground">
+              <div className="space-y-1.5">
+                <Label htmlFor="bulk-subject">Subject</Label>
+                <Input
+                  id="bulk-subject"
+                  value={bulkSubject}
+                  onChange={(event) => setBulkSubject(event.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="bulk-message">Message</Label>
+                <Textarea
+                  id="bulk-message"
+                  value={bulkMessage}
+                  onChange={(event) => setBulkMessage(event.target.value)}
+                  rows={7}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Available fields: {"{{customer_name}}"}, {"{{week}}"}, {"{{job_count}}"}.
+                </p>
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfirmBulkOpen(false)}>
@@ -507,15 +563,25 @@ function EmailsPage() {
                     <div>{preview.customer.cc_emails.join(", ")}</div>
                   </>
                 )}
-                <div className="text-xs text-muted-foreground mt-2">Subject</div>
-                <div className="font-medium">{w && subjectFor(preview.name, w)}</div>
+                <div className="space-y-1.5 mt-3">
+                  <Label htmlFor="preview-subject">Subject</Label>
+                  <Input
+                    id="preview-subject"
+                    value={draftSubject}
+                    onChange={(event) => setDraftSubject(event.target.value)}
+                  />
+                </div>
               </div>
               <div className="border rounded-md p-4">
-                <p>Hi {preview.name} team,</p>
-                <p className="mt-2">
-                  Please find attached your current Open Jobs report for the week of{" "}
-                  {w && formatWeek(w)}. There are <strong>{preview.jobs.length}</strong> open jobs.
-                </p>
+                <div className="space-y-1.5">
+                  <Label htmlFor="preview-message">Message</Label>
+                  <Textarea
+                    id="preview-message"
+                    value={draftMessage}
+                    onChange={(event) => setDraftMessage(event.target.value)}
+                    rows={7}
+                  />
+                </div>
                 <div className="mt-3 max-h-[240px] overflow-auto border rounded">
                   <table className="w-full text-xs">
                     <thead className="bg-muted/50">
@@ -554,7 +620,7 @@ function EmailsPage() {
             <Button
               onClick={() => {
                 if (preview) {
-                  sendOne(preview);
+                  sendOne(preview, { subject: draftSubject, message: draftMessage });
                   setPreview(null);
                 }
               }}
@@ -572,6 +638,20 @@ function EmailsPage() {
 
 function subjectFor(name: string, week: string) {
   return `Open Jobs Report - ${name} - Week of ${formatWeek(week)}`;
+}
+
+function defaultMessageFor(name: string, week: string, jobCount: number) {
+  return [
+    `Hi ${name} team,`,
+    "",
+    `Please find attached your Open Jobs report for the week of ${formatWeek(week)}.`,
+    `There are ${jobCount} open jobs included.`,
+  ].join("\n");
+}
+
+function cleanComposerText(value?: string) {
+  const text = value?.trim();
+  return text ? text : undefined;
 }
 
 function attachmentFor(name: string, week: string) {

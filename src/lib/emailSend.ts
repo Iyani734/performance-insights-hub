@@ -34,7 +34,17 @@ type SendResult = {
 const sendInputSchema = z.object({
   weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   customerIds: z.array(z.string().uuid()).optional(),
+  customSubject: z.string().trim().max(200).optional(),
+  customMessage: z.string().trim().max(5000).optional(),
 });
+
+const DEFAULT_SUBJECT_TEMPLATE = "Open Jobs Report - {{customer_name}} - Week of {{week}}";
+const DEFAULT_MESSAGE_TEMPLATE = [
+  "Hi {{customer_name}} team,",
+  "",
+  "Please find attached your Open Jobs report for the week of {{week}}.",
+  "There are {{job_count}} open jobs included.",
+].join("\n");
 
 export const sendOpenJobsEmails = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -86,17 +96,20 @@ export const sendOpenJobsEmails = createServerFn({ method: "POST" })
     const sentRows = await fetchAllSupabaseRows<any>((from, to) =>
       supabaseAdmin
         .from("email_jobs")
-        .select("customer_id,customer_email,status")
+        .select("customer_id,customer_email,status,sent_at")
         .eq("week_start", data.weekStart)
-        .eq("status", "sent")
         .range(from, to),
     );
 
     const sentCustomerIds = new Set(
-      (sentRows ?? []).map((row) => row.customer_id).filter((id): id is string => !!id),
+      (sentRows ?? [])
+        .filter(isSentEmailLog)
+        .map((row) => row.customer_id)
+        .filter((id): id is string => !!id),
     );
     const sentEmails = new Set(
       (sentRows ?? [])
+        .filter(isSentEmailLog)
         .map((row) => String(row.customer_email ?? "").trim().toLowerCase())
         .filter(Boolean),
     );
@@ -118,7 +131,13 @@ export const sendOpenJobsEmails = createServerFn({ method: "POST" })
       }
 
       const batchId = crypto.randomUUID();
-      const subject = subjectFor(customer.name, data.weekStart);
+      const templateValues = {
+        customerName: customer.name,
+        weekLabel: formatWeekLabel(data.weekStart),
+        jobCount: jobs.length,
+      };
+      const subject = renderEmailTemplate(data.customSubject || DEFAULT_SUBJECT_TEMPLATE, templateValues);
+      const message = renderEmailTemplate(data.customMessage || DEFAULT_MESSAGE_TEMPLATE, templateValues);
       const attachmentName = attachmentFor(customer.name, data.weekStart);
       const logPayload = {
         batch_id: batchId,
@@ -158,8 +177,8 @@ export const sendOpenJobsEmails = createServerFn({ method: "POST" })
           to: email,
           cc: customer.cc_emails ?? [],
           subject,
-          html: emailHtml(customer.name, data.weekStart, jobs),
-          text: emailText(customer.name, data.weekStart, jobs),
+          html: emailHtml(message, jobs),
+          text: emailText(message),
           attachmentName,
           attachmentContent: csvBase64(jobs),
         });
@@ -170,11 +189,17 @@ export const sendOpenJobsEmails = createServerFn({ method: "POST" })
             status: "sent",
             sent_at: now,
             error: null,
+          })
+          .eq("id", log.id);
+        if (updateError) throw updateError;
+
+        await supabaseAdmin
+          .from("email_jobs")
+          .update({
             provider: "resend",
             resend_message_id: resendMessageId,
           } as any)
           .eq("id", log.id);
-        if (updateError) throw updateError;
 
         await supabaseAdmin
           .from("customers")
@@ -202,10 +227,6 @@ export const sendOpenJobsEmails = createServerFn({ method: "POST" })
 
     return result;
   });
-
-function subjectFor(name: string, week: string) {
-  return `Open Jobs Report - ${name} - Week of ${formatWeekLabel(week)}`;
-}
 
 function attachmentFor(name: string, week: string) {
   return `${name.replace(/[^A-Za-z0-9]+/g, "_")}-open-jobs-${week}.csv`;
@@ -255,7 +276,7 @@ async function sendWithResend(input: {
   return payload?.id ?? null;
 }
 
-function emailHtml(customerName: string, week: string, jobs: OpenJobRow[]) {
+function emailHtml(message: string, jobs: OpenJobRow[]) {
   const previewRows = jobs
     .slice(0, 50)
     .map(
@@ -272,9 +293,7 @@ function emailHtml(customerName: string, week: string, jobs: OpenJobRow[]) {
 
   return `
     <div style="font-family: Arial, sans-serif; color: #172033; line-height: 1.5;">
-      <p>Hi ${escapeHtml(customerName)} team,</p>
-      <p>Please find attached your Open Jobs report for the week of ${escapeHtml(formatWeekLabel(week))}.</p>
-      <p><strong>${jobs.length}</strong> open job${jobs.length === 1 ? "" : "s"} are included.</p>
+      ${messageToHtml(message)}
       <table style="border-collapse: collapse; width: 100%; font-size: 13px;">
         <thead>
           <tr>
@@ -291,13 +310,8 @@ function emailHtml(customerName: string, week: string, jobs: OpenJobRow[]) {
     </div>`;
 }
 
-function emailText(customerName: string, week: string, jobs: OpenJobRow[]) {
-  return [
-    `Hi ${customerName} team,`,
-    "",
-    `Please find attached your Open Jobs report for the week of ${formatWeekLabel(week)}.`,
-    `${jobs.length} open job${jobs.length === 1 ? "" : "s"} are included.`,
-  ].join("\n");
+function emailText(message: string) {
+  return message;
 }
 
 function csvBase64(jobs: OpenJobRow[]) {
@@ -337,6 +351,28 @@ function formatWeekLabel(iso: string) {
     day: "numeric",
     year: "numeric",
   });
+}
+
+function renderEmailTemplate(
+  template: string,
+  values: { customerName: string; weekLabel: string; jobCount: number },
+) {
+  return template
+    .replace(/\{\{\s*customer(?:_name)?\s*\}\}/gi, values.customerName)
+    .replace(/\{\{\s*week\s*\}\}/gi, values.weekLabel)
+    .replace(/\{\{\s*job_count\s*\}\}/gi, String(values.jobCount));
+}
+
+function messageToHtml(message: string) {
+  return message
+    .trim()
+    .split(/\n{2,}/)
+    .map((paragraph) => `<p>${paragraph.split(/\n/).map(escapeHtml).join("<br />")}</p>`)
+    .join("\n");
+}
+
+function isSentEmailLog(row: { status?: string | null; sent_at?: string | null }) {
+  return row.status === "sent" || !!row.sent_at;
 }
 
 function escapeHtml(value: unknown) {
