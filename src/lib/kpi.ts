@@ -1,7 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { isSeededDemoPayload, isSeededDemoUpload } from "@/lib/liveData";
 import {
-  calculateInvoiceCycleTime,
   calculateTotalCycleTime,
   hasValue,
   normalizeTicketStatus,
@@ -75,10 +74,10 @@ export function normalizeKpiTarget(target: KpiTarget): KpiTarget {
       ...target,
       label: "Ticket Quality",
       unit: "%",
-      direction: "lower_is_better",
-      green_min: 3,
-      yellow_min: 5,
-      target_display: "< 3%",
+      direction: "higher_is_better",
+      green_min: 95,
+      yellow_min: 90,
+      target_display: ">= 95%",
       auto: true,
     };
   }
@@ -115,10 +114,11 @@ export async function computeAutoKpis(week: string) {
 export async function computeAutoKpisForRange(from: string, to: string) {
   const uploads = await fetchUploadsForRange(from, to);
   const activeUpload = await fetchLatestActiveReviewFinalUpload();
+  const cycleUpload = await fetchLatestTotalCycleTimeUpload();
   const activeUploads = activeUpload ? [activeUpload] : [];
   const qcUploads = uploads.filter(isTicketQcUpload);
   const qualityUploads = uploads.filter(isTicketQualityUpload);
-  const cycleUploads = uploads.filter(isTotalCycleTimeUpload);
+  const cycleUploads = cycleUpload ? [cycleUpload] : [];
 
   const [tickets, cycleRows, qualityErrorRows] = await Promise.all([
     fetchTicketRowsByUploadIds(activeUploads.map((upload) => upload.id), "tickets"),
@@ -133,7 +133,7 @@ export async function computeAutoKpisForRange(from: string, to: string) {
   const statusMatches = (status: unknown, value: string) => normalizeTicketStatus(status) === value;
   const ticketQc = calculateTicketQcReviewToFinal(qcUploads);
   const ticketQuality = calculateTicketQualityFromUploads(qualityUploads, qualityErrorRows.length);
-  const totalCycleTime = calculateInvoiceCycleTime(cycleRows, to) ?? calculateTotalCycleTime(cycleRows, new Date(`${to}T00:00:00Z`));
+  const totalCycleTime = calculateTotalCycleTime(cycleRows);
 
   return {
     review_to_final_edit: ticketQc.actual,
@@ -204,6 +204,23 @@ async function fetchLatestActiveReviewFinalUpload(): Promise<UploadLike | null> 
   );
 }
 
+async function fetchLatestTotalCycleTimeUpload(): Promise<UploadLike | null> {
+  const data = await fetchAllSupabaseRows<UploadLike>((rangeFrom, rangeTo) =>
+    supabase
+      .from("report_uploads")
+      .select("id,kind,file_name,row_count,week_start,effective_from,effective_to,status,created_at")
+      .order("created_at", { ascending: false })
+      .range(rangeFrom, rangeTo),
+  );
+
+  return latestUpload(
+    data
+      .filter((upload) => !isSeededDemoUpload(upload.file_name))
+      .filter((upload) => upload.status !== "failed" && upload.status !== "processing")
+      .filter(isTotalCycleTimeUpload),
+  );
+}
+
 async function fetchTicketRowsByUploadIds(uploadIds: string[], kind: "tickets" | "invoiced") {
   if (!uploadIds.length) return [];
   const data = await fetchAllSupabaseRows<any>((from, to) =>
@@ -240,11 +257,15 @@ function calculateTicketQualityFromUploads(uploads: UploadLike[], errorRowsInRan
   const totalUpload = latestUpload(uploads.filter(isTcrTotalUpload));
   const errorRows = errorUpload ? errorRowsInRange : 0;
   const totalRows = totalUpload ? sumImportedRows([totalUpload]) : 0;
+  const errorRate = totalRows > 0 ? (errorRows / totalRows) * 100 : null;
 
   return {
     errorRows,
     totalRows,
-    actual: errorUpload && totalUpload && totalRows > 0 ? (errorRows / totalRows) * 100 : null,
+    actual:
+      errorUpload && totalUpload && errorRate != null
+        ? Math.max(0, Math.min(100, 100 - errorRate))
+        : null,
   };
 }
 

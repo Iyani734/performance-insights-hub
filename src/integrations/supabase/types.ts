@@ -250,6 +250,9 @@ export type Database = {
       kpi_values: {
         Row: {
           actual: number | null
+          confirmation_note: string | null
+          confirmed_at: string | null
+          confirmed_by: string | null
           created_at: string
           entered_by: string | null
           id: string
@@ -259,6 +262,9 @@ export type Database = {
         }
         Insert: {
           actual?: number | null
+          confirmation_note?: string | null
+          confirmed_at?: string | null
+          confirmed_by?: string | null
           created_at?: string
           entered_by?: string | null
           id?: string
@@ -268,6 +274,9 @@ export type Database = {
         }
         Update: {
           actual?: number | null
+          confirmation_note?: string | null
+          confirmed_at?: string | null
+          confirmed_by?: string | null
           created_at?: string
           entered_by?: string | null
           id?: string

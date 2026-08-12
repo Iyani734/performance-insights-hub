@@ -284,7 +284,13 @@ function UploadsPage() {
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
   const [uploadStage, setUploadStage] = useState("");
-  const isSnapshotUpload = kind === "active_review_final";
+  const isSnapshotUpload = kind === "active_review_final" || kind === "total_cycle_time";
+  const snapshotUploadLabel =
+    kind === "active_review_final"
+      ? "Active/Review/Final"
+      : kind === "total_cycle_time"
+        ? "Invoice Cycle Time"
+        : "snapshot";
   const uploadBucket = isSnapshotUpload ? defaultRange.to : effectiveFrom;
   const uploadEffectiveFrom = isSnapshotUpload ? defaultRange.to : effectiveFrom;
   const uploadEffectiveTo = isSnapshotUpload ? defaultRange.to : effectiveTo;
@@ -563,7 +569,7 @@ function UploadsPage() {
       if (!demoMode && completedUploadIds.length) {
         setUploadStage(
           isSnapshotUpload
-            ? "Replacing older Active/Review/Final snapshot..."
+            ? `Replacing older ${snapshotUploadLabel} snapshot...`
             : "Replacing older files for this date range...",
         );
         try {
@@ -636,7 +642,7 @@ function UploadsPage() {
       if (replacedUploads) {
         toast.success(
           isSnapshotUpload
-            ? `Replaced ${replacedUploads} older Active/Review/Final snapshot${replacedUploads === 1 ? "" : "s"}.`
+            ? `Replaced ${replacedUploads} older ${snapshotUploadLabel} snapshot${replacedUploads === 1 ? "" : "s"}.`
             : `Replaced ${replacedUploads} older upload${replacedUploads === 1 ? "" : "s"} for this date range.`,
         );
       }
@@ -813,7 +819,7 @@ function UploadsPage() {
             />
             <p className="text-xs text-muted-foreground">
               {isSnapshotUpload
-                ? "This is a current snapshot. Uploading a new Active/Review/Final file replaces the previous snapshot. The header row is not counted as imported data."
+                ? `This is a current snapshot. Uploading a new ${snapshotUploadLabel} file replaces the previous snapshot. The header row is not counted as imported data.`
                 : "Pick the date range this file's data covers. The header row is not counted as imported data."}
               {kind === "ticket_qc"
                 ? " Ticket QC can accept TicketQC REVIEW and TicketQC FINAL together, or one at a time."

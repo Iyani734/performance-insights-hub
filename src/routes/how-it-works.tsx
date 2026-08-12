@@ -35,7 +35,7 @@ const METRICS: MetricSpec[] = [
     source: "Invoice Cycle Time export. The file name must include invoice cycle time or total cycle time.",
     formula: "business days from the oldest Deliver/Pickup date to today, excluding weekends",
     columns: ["Column J: Deliver/Pickup"],
-    why: "The app sorts Deliver/Pickup dates from oldest to newest, uses the oldest date, then counts business days through the current day.",
+    why: "This is a current snapshot, so no upload date range is needed. The newest Invoice Cycle Time upload replaces older snapshots, then the app sorts Deliver/Pickup dates from oldest to newest and counts business days through the current day.",
   },
   {
     key: "review_to_final_edit",
@@ -49,47 +49,47 @@ const METRICS: MetricSpec[] = [
   {
     key: "ticket_quality",
     label: "Ticket Quality",
-    target: "< 3%",
+    target: ">= 95%",
     source: "Ticket Quality and TCR Total exports. File names must include Ticket Quality or TCR Total.",
-    formula: "Ticket Quality error rows dated inside the selected range / TCR Total rows x 100",
+    formula: "100 - (Ticket Quality error rows dated inside the selected range / TCR Total rows x 100)",
     columns: ["Ticket Quality Date of Occurance / Date of Occurrence", "TCR Total data rows"],
-    why: "The ARC metric is a quality-error rate, so lower is better. The dashboard counts only dated error occurrences inside the selected range and waits until both source files exist.",
+    why: "The dashboard displays the good-ticket percentage. If the dated error rows equal 4% of total tickets, the KPI displays 96%. It waits until both source files exist.",
   },
   {
     key: "dispatch_responsiveness",
     label: "Team Responsiveness (within 1 hour)",
     target: ">= 95%",
-    source: "Manual entry",
-    formula: "requests answered within 1 hour / all requests x 100",
+    source: "Weekly manual entry",
+    formula: "average of weekly values entered inside the selected month",
     columns: [],
-    why: "The ARC document says the remaining service-quality metrics are managed manually unless the matching request/response source file is supplied.",
+    why: "Each week is entered once as requests answered within 1 hour divided by all requests. The weekly detail view shows the entries and a super admin can confirm or edit them.",
   },
   {
     key: "driver_safety",
     label: "Safety",
     target: "<= 20",
-    source: "Manual entry",
-    formula: "manager-entered safety event count for the selected month",
+    source: "Weekly manual entry",
+    formula: "average of weekly safety event counts entered inside the selected month",
     columns: [],
-    why: "Safety violations, including speeding violations, are tracked outside the TCR ticket export.",
+    why: "Safety violations, including speeding violations, are tracked outside the TCR ticket export. Once a weekly value is entered, normal editors cannot overwrite it until a new week starts.",
   },
   {
     key: "incomplete_tickets",
     label: "Incomplete Tickets",
     target: "<= 10",
-    source: "Manual entry",
-    formula: "count tickets missing labor times, internal notes, or required completion details",
+    source: "Weekly manual entry",
+    formula: "average of weekly incomplete-ticket counts entered inside the selected month",
     columns: ["Labor Time", "Internal Notes"],
-    why: "The current TCR ticket export does not consistently include every field needed to detect incomplete tickets automatically.",
+    why: "The current TCR ticket export does not consistently include every field needed to detect incomplete tickets automatically, so the weekly detail view is the audit trail for the monthly average.",
   },
   {
     key: "missed_jobs",
     label: "Missed Jobs / Late Jobs / Client Callbacks / Reworks",
     target: "<= 1",
-    source: "Manual entry",
-    formula: "missed jobs + late jobs + client callbacks + reworks for the selected month",
+    source: "Weekly manual entry",
+    formula: "average of weekly totals for missed jobs + late jobs + client callbacks + reworks",
     columns: [],
-    why: "These exceptions are tracked by operations because some missed jobs do not create a ticket row.",
+    why: "These exceptions are tracked by operations because some missed jobs do not create a ticket row. The dashboard averages the weekly entries inside the selected month.",
   },
   {
     key: "status_snapshot",
@@ -140,8 +140,8 @@ function HowItWorks() {
             <Calculator className="w-5 h-5 text-primary mb-2" />
             <div className="font-medium">2. Automatic KPIs run</div>
             <p className="text-sm text-muted-foreground mt-1">
-              Date-based KPIs use the selected From and To dates. Active/Review/Final is a current
-              snapshot, so the newest upload becomes the displayed status count.
+              Date-based KPIs use the selected From and To dates. Active/Review/Final and Invoice
+              Cycle Time are current snapshots, so the newest upload becomes the displayed value.
             </p>
           </Card>
           <Card className="p-5">
@@ -192,7 +192,7 @@ function HowItWorks() {
                   Ticket QC uses TicketQC FINAL rows divided by TicketQC REVIEW rows
                 </li>
                 <li>
-                  Ticket Quality uses dated Ticket Quality error rows divided by TCR Total rows
+                  Ticket Quality uses 100 minus dated Ticket Quality error rows divided by TCR Total rows
                 </li>
               </ul>
             </div>

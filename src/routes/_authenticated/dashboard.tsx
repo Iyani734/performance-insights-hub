@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { computeAutoKpisForRange, computeStatus, formatKpi, formatWeek, normalizeKpiTargets, type KpiTarget } from "@/lib/kpi";
+import { computeAutoKpisForRange, computeStatus, formatKpi, formatWeek, normalizeKpiTargets, weekStartOf, type KpiTarget } from "@/lib/kpi";
 import { buildRows, overallScore, deltaPct, isImproving, commentary, focusAreas } from "@/lib/summary";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,12 +9,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
 import { StatusPill } from "@/components/StatusPill";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 import { useEffect, useMemo, useState } from "react";
-import { Ticket, CheckCircle2, AlertTriangle, DollarSign, ArrowUp, ArrowDown, Minus, Mail, TrendingUp, Pencil } from "lucide-react";
+import { Ticket, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Minus, Mail, TrendingUp, Pencil, Eye, Lock } from "lucide-react";
 import { toast } from "sonner";
-import { useAuth } from "@/lib/useAuth";
+import { canEdit, useAuth } from "@/lib/useAuth";
 import { useDemoMode } from "@/lib/demoMode";
 import { isSeededDemoEmail, isSeededDemoNote, isSeededDemoSource, isSeededDemoUpload } from "@/lib/liveData";
 import { reportKindLabel } from "@/lib/reportTypes";
@@ -77,18 +78,46 @@ function saveDashboardRange(range: DateRangeValue) {
 
 function valuesMap(rows: any[]) {
   const map: Record<string, number | null> = {};
+  const grouped = new Map<string, number[]>();
   for (const v of rows) {
     if (v.source === "auto") continue;
-    map[v.kpi_key] = v.actual != null ? Number(v.actual) : null;
+    if (v.actual == null) {
+      if (!grouped.has(v.kpi_key)) grouped.set(v.kpi_key, []);
+      continue;
+    }
+    const actual = Number(v.actual);
+    if (!Number.isFinite(actual)) continue;
+    grouped.set(v.kpi_key, [...(grouped.get(v.kpi_key) ?? []), actual]);
+  }
+  for (const [kpiKey, values] of grouped) {
+    map[kpiKey] = values.length
+      ? values.reduce((sum, value) => sum + value, 0) / values.length
+      : null;
   }
   return map;
+}
+
+function manualRowsForKpi(rows: any[], kpiKey: string) {
+  return rows
+    .filter((row) => row.kpi_key === kpiKey && row.source !== "auto")
+    .sort((a, b) => String(a.week_start).localeCompare(String(b.week_start)));
+}
+
+function averageActual(rows: any[]) {
+  const values = rows
+    .map((row) => (row.actual == null ? null : Number(row.actual)))
+    .filter((value): value is number => value != null && Number.isFinite(value));
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 }
 
 function Dashboard() {
   const nav = useNavigate();
   const qc = useQueryClient();
-  const { user } = useAuth();
+  const auth = useAuth();
+  const { user, isSuperAdmin, isAdmin } = auth;
   const demoMode = useDemoMode();
+  const canEditDashboard = demoMode || canEdit(auth, "dashboard");
+  const canOverrideManualKpis = isAdmin || isSuperAdmin;
   const [range, setRange] = useState<DateRangeValue>(loadDashboardRange);
   const validRange = !!range.from && !!range.to && range.from <= range.to;
   const prevRange = useMemo(() => previousDateRange(range), [range]);
@@ -133,7 +162,7 @@ function Dashboard() {
     queryKey: ["kpi_trends", demoMode],
     queryFn: async () => {
       if (demoMode) return demoKpiValuesWithLocal();
-      const { data } = await supabase.from("kpi_values").select("kpi_key,week_start,actual,source").order("week_start");
+      const { data } = await supabase.from("kpi_values").select("*").order("week_start");
       return (data ?? []).filter((row) => !isSeededDemoSource(row.source));
     },
   });
@@ -211,20 +240,67 @@ function Dashboard() {
 
   const [editingKpi, setEditingKpi] = useState<KpiTarget | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [editingWeek, setEditingWeek] = useState("");
+  const [manualDetailKpi, setManualDetailKpi] = useState<KpiTarget | null>(null);
+  const currentManualWeek = weekStartOf(new Date());
+  const activeEditingWeek = editingWeek || currentManualWeek;
+  const editingWeeklyRows = useMemo(
+    () => (editingKpi ? manualRowsForKpi(valuesQ.data ?? [], editingKpi.kpi_key) : []),
+    [editingKpi, valuesQ.data],
+  );
+  const editingWeekRow = editingWeeklyRows.find((row) => row.week_start === activeEditingWeek);
+  const detailWeeklyRows = useMemo(
+    () => (manualDetailKpi ? manualRowsForKpi(valuesQ.data ?? [], manualDetailKpi.kpi_key) : []),
+    [manualDetailKpi, valuesQ.data],
+  );
+  const detailAverage = useMemo(() => averageActual(detailWeeklyRows), [detailWeeklyRows]);
 
   const saveManual = useMutation({
     mutationFn: async () => {
       if (!editingKpi || !user) return;
       const val = editValue === "" ? null : Number(editValue);
+      if (!Number.isFinite(val as number) && val !== null) throw new Error("Enter a valid number.");
+      const { data: existing, error: existingError } = await supabase
+        .from("kpi_values")
+        .select("id,week_start")
+        .eq("kpi_key", editingKpi.kpi_key)
+        .eq("week_start", activeEditingWeek)
+        .maybeSingle();
+      if (existingError) throw existingError;
+      if (existing && !canOverrideManualKpis) {
+        throw new Error("This metric is already entered for this week. An admin can edit the locked value.");
+      }
       const { error } = await supabase.from("kpi_values").upsert(
-        { kpi_key: editingKpi.kpi_key, week_start: range.from, actual: val, source: "manual", entered_by: user.id },
+        { kpi_key: editingKpi.kpi_key, week_start: activeEditingWeek, actual: val, source: "manual", entered_by: user.id },
         { onConflict: "kpi_key,week_start" }
       );
       if (error) throw error;
     },
-    onSuccess: () => { toast.success("Saved"); setEditingKpi(null); qc.invalidateQueries(); },
+    onSuccess: () => { toast.success("Saved"); setEditingKpi(null); setEditingWeek(""); qc.invalidateQueries(); },
     onError: (e: any) => toast.error(e.message),
   });
+
+  const confirmManual = useMutation({
+    mutationFn: async (rowId: string) => {
+      if (!user || !canOverrideManualKpis) throw new Error("Only an admin can confirm manual metrics.");
+      const { error } = await supabase
+        .from("kpi_values")
+        .update({ confirmed_by: user.id, confirmed_at: new Date().toISOString() })
+        .eq("id", rowId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Manual metric confirmed");
+      qc.invalidateQueries();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  function openManualEditor(target: KpiTarget, row?: any) {
+    setEditingKpi(target);
+    setEditingWeek(row?.week_start ?? currentManualWeek);
+    setEditValue(row?.actual != null ? String(row.actual) : "");
+  }
 
   const [note, setNote] = useState("");
   const addNote = useMutation({
@@ -330,6 +406,9 @@ function Dashboard() {
             const good = isImproving(r);
             const DeltaIcon = d == null ? Minus : good ? ArrowUp : ArrowDown;
             const color = r.status === "green" ? "border-l-success" : r.status === "yellow" ? "border-l-warning" : r.status === "red" ? "border-l-destructive" : "border-l-muted";
+            const manualWeekRows = manualRowsForKpi(valuesQ.data ?? [], r.target.kpi_key);
+            const currentWeekManual = manualWeekRows.find((row) => row.week_start === currentManualWeek);
+            const manualLocked = !!currentWeekManual && !canOverrideManualKpis;
             return (
               <div key={r.target.id} className={`h-full min-h-[210px] rounded-lg border border-l-4 p-4 ${color} bg-card`}>
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
@@ -355,10 +434,29 @@ function Dashboard() {
                 {r.target.auto ? (
                   <span className="mt-2 inline-block text-[10px] text-muted-foreground uppercase tracking-wide">Auto-calculated</span>
                 ) : (
-                  <button onClick={() => { setEditingKpi(r.target); setEditValue(r.actual != null ? String(r.actual) : ""); }}
-                    className="mt-2 text-xs text-primary hover:underline inline-flex items-center gap-1">
-                    <Pencil className="w-3 h-3" />{r.actual == null ? "Enter value" : "Update value"}
-                  </button>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openManualEditor(r.target, currentWeekManual)}
+                      disabled={!canEditDashboard || manualLocked}
+                      className="text-xs text-primary hover:underline disabled:pointer-events-none disabled:text-muted-foreground inline-flex items-center gap-1"
+                    >
+                      {manualLocked ? <Lock className="w-3 h-3" /> : <Pencil className="w-3 h-3" />}
+                      {currentWeekManual
+                        ? manualLocked
+                          ? "Locked this week"
+                          : "Edit this week"
+                        : "Enter this week"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setManualDetailKpi(r.target)}
+                      className="text-xs text-primary hover:underline inline-flex items-center gap-1"
+                    >
+                      <Eye className="w-3 h-3" />
+                      Weekly detail
+                    </button>
+                  </div>
                 )}
               </div>
             );
@@ -462,16 +560,126 @@ function Dashboard() {
         </Card>
       </div>
 
-      <Dialog open={!!editingKpi} onOpenChange={(o) => !o && setEditingKpi(null)}>
+      <Dialog
+        open={!!manualDetailKpi}
+        onOpenChange={(open) => {
+          if (!open) setManualDetailKpi(null);
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{manualDetailKpi?.label} weekly detail</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-muted/50 px-3 py-2 text-sm">
+              <span className="text-muted-foreground">{periodLabel(range)}</span>
+              <span className="font-semibold">
+                Average: {manualDetailKpi ? formatKpi(detailAverage, manualDetailKpi) : "-"}
+              </span>
+            </div>
+            <div className="max-h-[360px] overflow-auto rounded-md border">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/70 text-xs uppercase text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">Week</th>
+                    <th className="px-3 py-2 text-left font-medium">Value</th>
+                    <th className="px-3 py-2 text-left font-medium">Status</th>
+                    <th className="px-3 py-2 text-right font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detailWeeklyRows.map((row) => (
+                    <tr key={row.id} className="border-t">
+                      <td className="px-3 py-2 whitespace-nowrap">{formatWeek(row.week_start)}</td>
+                      <td className="px-3 py-2 font-medium">
+                        {manualDetailKpi ? formatKpi(row.actual, manualDetailKpi) : row.actual ?? "-"}
+                      </td>
+                      <td className="px-3 py-2">
+                        {row.confirmed_at ? (
+                          <Badge className="bg-success/15 text-success hover:bg-success/15">
+                            Confirmed
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline">Unconfirmed</Badge>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <div className="inline-flex items-center gap-2">
+                          {canOverrideManualKpis && !row.confirmed_at && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => confirmManual.mutate(row.id)}
+                              disabled={confirmManual.isPending}
+                            >
+                              Confirm
+                            </Button>
+                          )}
+                          {canOverrideManualKpis && manualDetailKpi && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => openManualEditor(manualDetailKpi, row)}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {detailWeeklyRows.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                        No weekly manual values in this date range.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Manual metrics are entered once per week. Non-admin editors cannot change a week after it has been entered; an admin can edit and confirm the row.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setManualDetailKpi(null)}>
+              Close
+            </Button>
+            {manualDetailKpi && canEditDashboard && (
+              <Button onClick={() => openManualEditor(manualDetailKpi)}>
+                Enter this week
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!editingKpi}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditingKpi(null);
+            setEditingWeek("");
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader><DialogTitle>Update {editingKpi?.label}</DialogTitle></DialogHeader>
           <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">{periodLabel(range)}. Target: {editingKpi?.target_display ?? "—"}.</p>
+            <p className="text-sm text-muted-foreground">
+              Week starting {formatWeek(activeEditingWeek)}. Target: {editingKpi?.target_display ?? "-"}.
+            </p>
+            {editingWeekRow && !canOverrideManualKpis && (
+              <p className="text-sm text-warning">
+                This week is locked because a value already exists. An admin can edit it.
+              </p>
+            )}
             <Input type="number" step="0.1" value={editValue} onChange={(e) => setEditValue(e.target.value)} placeholder="Enter value" autoFocus />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditingKpi(null)}>Cancel</Button>
-            <Button onClick={() => saveManual.mutate()} disabled={saveManual.isPending}>Save</Button>
+            <Button variant="outline" onClick={() => { setEditingKpi(null); setEditingWeek(""); }}>Cancel</Button>
+            <Button onClick={() => saveManual.mutate()} disabled={saveManual.isPending || (!!editingWeekRow && !canOverrideManualKpis)}>Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -72,11 +72,11 @@ export const DEMO_TARGETS: KpiTarget[] = [
     owner: "Dispatch/Drivers",
     cadence: "Monthly",
     unit: "%",
-    direction: "lower_is_better",
-    green_min: 3,
-    yellow_min: 5,
-    target_display: "< 3%",
-    auto: false,
+    direction: "higher_is_better",
+    green_min: 95,
+    yellow_min: 90,
+    target_display: ">= 95%",
+    auto: true,
     sort_order: 2,
   },
   {
@@ -153,7 +153,7 @@ export const DEMO_TARGETS: KpiTarget[] = [
 
 const DEMO_SERIES: Record<string, number[]> = {
   review_to_final_edit: [96.8, 96.2, 95.6, 95.1],
-  ticket_quality: [1.1, 1.3, 1.5, 1.8],
+  ticket_quality: [98.9, 98.7, 98.5, 98.2],
   invoice_cycle_time: [2.0, 2.2, 2.4, 2.7],
   dispatch_responsiveness: [97.8, 97.2, 96.8, 96.1],
   driver_safety: [12, 14, 16, 18],
@@ -400,10 +400,10 @@ function localDemoAutoKpisForRange(range: DateRangeValue) {
       const qualityValue =
         m.ticketQuality ??
         (m.qualityTotalTickets != null && m.qualityTotalTickets > 0 && m.qualityIssues != null
-          ? ((m.qualityIssues ?? 0) / m.qualityTotalTickets) * 100
+          ? 100 - ((m.qualityIssues ?? 0) / m.qualityTotalTickets) * 100
           : null) ??
         (m.invoiced != null && m.invoiced > 0 && m.invoiceQualityIssues != null
-          ? ((m.invoiceQualityIssues ?? 0) / m.invoiced) * 100
+          ? 100 - ((m.invoiceQualityIssues ?? 0) / m.invoiced) * 100
           : null);
       const invoiceCycleValue =
         m.invoiceCycleTime ??
@@ -568,8 +568,8 @@ export function demoKpiValuesWithLocal() {
         actual:
           m.ticketQuality ??
           (m.qualityTotalTickets != null && m.qualityTotalTickets > 0 && m.qualityIssues != null
-            ? ((m.qualityIssues ?? 0) / m.qualityTotalTickets) * 100
-            : ((m.invoiceQualityIssues ?? 0) / (m.invoiced ?? 1)) * 100),
+            ? 100 - ((m.qualityIssues ?? 0) / m.qualityTotalTickets) * 100
+            : 100 - ((m.invoiceQualityIssues ?? 0) / (m.invoiced ?? 1)) * 100),
         source: "demo-upload",
         entered_by: null,
         created_at,

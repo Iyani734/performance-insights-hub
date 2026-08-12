@@ -87,6 +87,7 @@ export const replaceSupersededUploads = createServerFn({ method: "POST" })
 
 function replacementKey(upload: UploadRow) {
   if (upload.kind === "active_review_final") return "active_review_final|snapshot";
+  if (upload.kind === "total_cycle_time") return "total_cycle_time|snapshot";
 
   return [
     upload.kind ?? "",
