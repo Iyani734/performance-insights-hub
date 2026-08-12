@@ -16,7 +16,7 @@ export type AuthState = {
   displayName: string | null;
 };
 
-// Default permissions when no explicit row exists: everyone can view, only admins can edit.
+// Default permissions when no explicit row exists: no access until a super admin approves the user.
 export const DEFAULT_PAGES = [
   "dashboard", "analytics", "uploads", "open-jobs", "customers", "emails", "history", "support", "settings",
 ];
@@ -25,7 +25,7 @@ export function canView(state: AuthState, page: string): boolean {
   if (state.isSuperAdmin) return true;
   const p = state.perms[page];
   if (p) return p.can_view;
-  return true;
+  return false;
 }
 
 export function canEdit(state: AuthState, page: string): boolean {

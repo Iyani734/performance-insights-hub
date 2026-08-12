@@ -1,7 +1,9 @@
 import { supabase } from "@/integrations/supabase/client";
 import { isSeededDemoPayload, isSeededDemoUpload } from "@/lib/liveData";
 import {
+  calculateInvoiceCycleTime,
   calculateTotalCycleTime,
+  deliverPickupDateFromRow,
   hasValue,
   normalizeTicketStatus,
 } from "@/lib/kpiRules";
@@ -129,9 +131,10 @@ export async function computeAutoKpisForRange(from: string, to: string) {
   ]);
 
   const statusMatches = (status: unknown, value: string) => normalizeTicketStatus(status) === value;
+  const ticketsInDateRange = tickets.filter((row: any) => isTicketInDateRange(row, from, to));
   const ticketQc = calculateTicketQcReviewToFinal(qcUploads);
   const ticketQuality = calculateTicketQualityFromUploads(qualityUploads, qualityErrorRows.length);
-  const totalCycleTime = calculateTotalCycleTime(cycleRows);
+  const totalCycleTime = calculateInvoiceCycleTime(cycleRows, to) ?? calculateTotalCycleTime(cycleRows, new Date(`${to}T00:00:00Z`));
 
   return {
     review_to_final_edit: ticketQc.actual,
@@ -139,7 +142,7 @@ export async function computeAutoKpisForRange(from: string, to: string) {
     invoice_cycle_time: totalCycleTime,
     dispatch_completion: null,
     totals: {
-      tickets: tickets.length,
+      tickets: ticketsInDateRange.length,
       invoiced: cycleRows.length,
       quality_issues: ticketQuality.errorRows,
       quality_total_tickets: ticketQuality.totalRows,
@@ -147,10 +150,10 @@ export async function computeAutoKpisForRange(from: string, to: string) {
       qc_review_tickets: ticketQc.reviewRows,
       qc_final_tickets: ticketQc.finalRows,
       cycle_time_rows: cycleRows.length,
-      voided: tickets.filter((r: any) => hasValue(r.void_reason)).length,
-      active_tickets: tickets.filter((r: any) => statusMatches(r.status, "active")).length,
-      review_tickets: tickets.filter((r: any) => statusMatches(r.status, "review")).length,
-      final_edit_tickets: tickets.filter((r: any) => statusMatches(r.status, "final edit")).length,
+      voided: ticketsInDateRange.filter((r: any) => hasValue(r.void_reason)).length,
+      active_tickets: ticketsInDateRange.filter((r: any) => statusMatches(r.status, "active")).length,
+      review_tickets: ticketsInDateRange.filter((r: any) => statusMatches(r.status, "review")).length,
+      final_edit_tickets: ticketsInDateRange.filter((r: any) => statusMatches(r.status, "final edit")).length,
     },
   };
 }
@@ -254,4 +257,11 @@ function latestUpload(uploads: UploadLike[]) {
 function uploadTimestamp(upload: UploadLike) {
   const value = Date.parse(upload.created_at ?? "");
   return Number.isFinite(value) ? value : 0;
+}
+
+function isTicketInDateRange(row: any, from: string, to: string) {
+  const deliverPickup = deliverPickupDateFromRow(row);
+  if (!deliverPickup) return true;
+  const iso = deliverPickup.toISOString().slice(0, 10);
+  return iso >= from && iso <= to;
 }

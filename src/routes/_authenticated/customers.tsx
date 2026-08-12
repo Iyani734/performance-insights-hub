@@ -11,12 +11,13 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2, Mail, X } from "lucide-react";
-import { useAuth } from "@/lib/useAuth";
+import { canEdit, useAuth } from "@/lib/useAuth";
 import { z } from "zod";
 import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_CURRENT_WEEK, demoCustomers, demoOpenJobs } from "@/lib/demoData";
 import { isSeededDemoEmail, isSeededDemoPayload } from "@/lib/liveData";
 import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
+import { deleteCustomer, upsertCustomer } from "@/lib/customersServer";
 
 export const Route = createFileRoute("/_authenticated/customers")({ component: CustomersPage });
 
@@ -38,7 +39,9 @@ const empty: FormState = { key: "", name: "", email: "", cc: [], lastEmail: "", 
 
 function CustomersPage() {
   const qc = useQueryClient();
-  const { role, user } = useAuth();
+  const auth = useAuth();
+  const { user } = auth;
+  const canManageCustomers = canEdit(auth, "customers");
   const demoMode = useDemoMode();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
@@ -140,20 +143,19 @@ function CustomersPage() {
         enabled: form.enabled,
         updated_at: new Date().toISOString(),
       };
-      if (editing && !editing.derived_from_open_jobs) {
-        const { error } = await supabase.from("customers").update(payload).eq("id", editing.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from("customers").upsert(payload, { onConflict: "key" });
-        if (error) throw error;
-      }
+      await upsertCustomer({
+        data: {
+          id: editing && !editing.derived_from_open_jobs ? editing.id : undefined,
+          customer: payload,
+        },
+      });
     },
     onSuccess: () => { toast.success("Saved"); setOpen(false); setEditing(null); setForm(empty); qc.invalidateQueries({ queryKey: ["customers"] }); qc.invalidateQueries({ queryKey: ["customers_from_open_jobs"] }); },
     onError: (e: any) => toast.error(e.message),
   });
 
   const del = useMutation({
-    mutationFn: async (id: string) => { const { error } = await supabase.from("customers").delete().eq("id", id); if (error) throw error; },
+    mutationFn: async (id: string) => { await deleteCustomer({ data: { id } }); },
     onSuccess: () => { toast.success("Deleted"); qc.invalidateQueries({ queryKey: ["customers"] }); },
     onError: (e: any) => toast.error(e.message),
   });
@@ -168,10 +170,12 @@ function CustomersPage() {
         enabled,
         updated_at: new Date().toISOString(),
       };
-      const { error } = customer.derived_from_open_jobs
-        ? await supabase.from("customers").upsert(payload, { onConflict: "key" })
-        : await supabase.from("customers").update({ enabled }).eq("id", customer.id);
-      if (error) throw error;
+      await upsertCustomer({
+        data: {
+          id: customer.derived_from_open_jobs ? undefined : customer.id,
+          customer: payload,
+        },
+      });
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["customers"] }); qc.invalidateQueries({ queryKey: ["customers_from_open_jobs"] }); },
   });
@@ -221,7 +225,7 @@ function CustomersPage() {
           <h1 className="font-display text-3xl font-semibold">Customers</h1>
           <p className="text-sm text-muted-foreground mt-1">Manage recipients for Open Jobs reports.</p>
         </div>
-        {user && (
+        {canManageCustomers && (
           <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setEditing(null); setForm(empty); }}}>
             <DialogTrigger asChild>
               <Button onClick={() => { setEditing(null); setForm(empty); }}>
@@ -304,14 +308,14 @@ function CustomersPage() {
                 <td className="px-6 py-3 text-right font-semibold">{jobsCountQ.data?.[c.key] ?? 0}</td>
                 <td className="px-6 py-3 text-muted-foreground text-xs">{c.last_email_sent_at ? new Date(c.last_email_sent_at).toLocaleString() : "—"}</td>
                 <td className="px-6 py-3">
-                  <Switch checked={!!c.enabled} onCheckedChange={(v) => toggleEnabled.mutate({ customer: c, enabled: v })} disabled={!user} />
+                  <Switch checked={!!c.enabled} onCheckedChange={(v) => toggleEnabled.mutate({ customer: c, enabled: v })} disabled={!canManageCustomers} />
                 </td>
                 <td className="px-6 py-3 text-right space-x-1 whitespace-nowrap">
                   <Button size="sm" variant="ghost" onClick={() => testEmail.mutate(c)} disabled={!c.email || c.derived_from_open_jobs} title="Queue test email">
                     <Mail className="w-4 h-4" />
                   </Button>
-                  {user && <Button size="sm" variant="ghost" onClick={() => edit(c)}><Pencil className="w-4 h-4" /></Button>}
-                  {role === "admin" && !c.derived_from_open_jobs && <>
+                  {canManageCustomers && <Button size="sm" variant="ghost" onClick={() => edit(c)}><Pencil className="w-4 h-4" /></Button>}
+                  {canManageCustomers && !c.derived_from_open_jobs && <>
                     <Button size="sm" variant="ghost" onClick={() => confirm("Delete this customer?") && del.mutate(c.id)}><Trash2 className="w-4 h-4 text-destructive" /></Button>
                   </>}
                 </td>

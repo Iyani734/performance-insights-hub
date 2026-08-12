@@ -58,6 +58,7 @@ function SidebarInner({
   const auth = useAuth();
   const { user, role, isSuperAdmin, displayName } = auth;
   const demoMode = !user && isDemoMode();
+  const hasAnyPageAccess = NAV.some((item) => canView(auth, item.key)) || canView(auth, "support");
 
   async function signOut() {
     await qc.cancelQueries();
@@ -126,21 +127,23 @@ function SidebarInner({
         )}
       >
         {/* Support link — above the user email */}
-        <Link
-          to="/support"
-          onClick={onNavigate}
-          title={collapsed ? "Support" : undefined}
-          className={cn(
-            "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-            collapsed && "justify-center px-2",
-            loc.pathname.startsWith("/support")
-              ? "bg-sidebar-primary/15 text-sidebar-primary-foreground"
-              : "text-sidebar-foreground/80 hover:bg-sidebar-accent"
-          )}
-        >
-          <LifeBuoy className="w-4 h-4 shrink-0" />
-          {!collapsed && <span className="truncate">Support</span>}
-        </Link>
+        {(demoMode || canView(auth, "support") || hasAnyPageAccess) && (
+          <Link
+            to="/support"
+            onClick={onNavigate}
+            title={collapsed ? "Support" : undefined}
+            className={cn(
+              "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+              collapsed && "justify-center px-2",
+              loc.pathname.startsWith("/support")
+                ? "bg-sidebar-primary/15 text-sidebar-primary-foreground"
+                : "text-sidebar-foreground/80 hover:bg-sidebar-accent"
+            )}
+          >
+            <LifeBuoy className="w-4 h-4 shrink-0" />
+            {!collapsed && <span className="truncate">Support</span>}
+          </Link>
+        )}
 
         {!collapsed ? (
           <>
@@ -215,6 +218,15 @@ function SidebarInner({
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const auth = useAuth();
+  const demoMode = !auth.user && isDemoMode();
+  const hasAnyPageAccess =
+    demoMode ||
+    auth.loading ||
+    auth.isSuperAdmin ||
+    NAV.some((item) => canView(auth, item.key)) ||
+    canView(auth, "support");
+  const content = hasAnyPageAccess ? children : <PendingApproval />;
 
   return (
     <div className="flex min-h-screen">
@@ -263,8 +275,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        <div className="max-w-[1400px] mx-auto p-4 md:p-8">{children}</div>
+        <div className="max-w-[1400px] mx-auto p-4 md:p-8">{content}</div>
       </main>
+    </div>
+  );
+}
+
+function PendingApproval() {
+  return (
+    <div className="min-h-[70vh] flex items-center justify-center">
+      <div className="max-w-lg rounded-lg border bg-card p-8 text-center shadow-sm">
+        <ShieldCheck className="mx-auto mb-4 h-10 w-10 text-primary" />
+        <h1 className="font-display text-2xl font-semibold">Account awaiting approval</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Your account is active, but company access has not been enabled yet. A super admin needs to grant page access before metrics, uploads, customers, emails, or history are visible.
+        </p>
+      </div>
     </div>
   );
 }

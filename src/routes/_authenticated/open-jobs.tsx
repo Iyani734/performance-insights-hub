@@ -120,6 +120,12 @@ function OpenJobsPage() {
   }, [currentCust, statusFilter, techFilter, ageFilter]);
 
   const totalJobs = (jobsQ.data ?? []).length;
+  const detailValue = (job: any, key: string, fallback?: any) => {
+    const value = job.details && typeof job.details === "object" ? job.details[key] : null;
+    if (value == null || value === "") return fallback ?? null;
+    if (Array.isArray(value)) return value.filter(Boolean).join(" / ");
+    return value;
+  };
 
   return (
     <div className="space-y-6">
@@ -169,7 +175,16 @@ function OpenJobsPage() {
                 </div>
                 {currentCust && (
                   <Button size="sm" variant="outline" onClick={() => downloadXlsx(
-                    filteredJobs.map(j => ({ Job: j.job_no, Ticket: j.ticket_no, Address: j.address, Status: j.status, Age: j.age_days, Technician: j.technician, Notes: j.notes, LastActivity: j.last_activity })),
+                    filteredJobs.map(j => ({
+                      "Job ID / Job Ref.": detailValue(j, "job_id_job_ref", j.job_no),
+                      "Purchase Order # / Customer Job#": detailValue(j, "purchase_order_customer_job_lines", detailValue(j, "purchase_order_customer_job", j.ticket_no)),
+                      "Srv Int": detailValue(j, "srv_int", j.order_type),
+                      Zone: detailValue(j, "zone", j.status),
+                      "Opened / First Ticket": detailValue(j, "opened_first_ticket_lines", detailValue(j, "opened_first_ticket")),
+                      "Last Ticket": detailValue(j, "last_ticket", j.last_activity),
+                      "Job Address/City": detailValue(j, "job_address_city_lines", detailValue(j, "job_address_city", j.address)),
+                      Foreman: detailValue(j, "foreman", j.technician),
+                    })),
                     `${currentCust.name}-open-jobs.xlsx`
                   )}>
                     <Download className="w-4 h-4 mr-2" />Download
@@ -203,34 +218,31 @@ function OpenJobsPage() {
             <table className="w-full text-sm">
               <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
                 <tr>
-                  <th className="text-left px-4 py-3 font-medium">Job #</th>
-                  <th className="text-left px-4 py-3 font-medium">Address</th>
-                  <th className="text-left px-4 py-3 font-medium">Status</th>
-                  <th className="text-left px-4 py-3 font-medium">Age</th>
-                  <th className="text-left px-4 py-3 font-medium">Technician</th>
-                  <th className="text-left px-4 py-3 font-medium">Notes</th>
+                  <th className="text-left px-4 py-3 font-medium">Job ID / Job Ref.</th>
+                  <th className="text-left px-4 py-3 font-medium">Purchase Order # / Customer Job#</th>
+                  <th className="text-left px-4 py-3 font-medium">Srv Int</th>
+                  <th className="text-left px-4 py-3 font-medium">Zone</th>
+                  <th className="text-left px-4 py-3 font-medium">Opened / First Ticket</th>
+                  <th className="text-left px-4 py-3 font-medium">Last Ticket</th>
+                  <th className="text-left px-4 py-3 font-medium">Job Address/City</th>
+                  <th className="text-left px-4 py-3 font-medium">Foreman</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredJobs.map((j: any) => (
                   <tr key={j.id} className="border-t">
-                    <td className="px-4 py-2.5 font-medium whitespace-nowrap">
-                      {j.job_no ?? j.ticket_no ?? "—"}
-                      {j.ticket_no && j.job_no && <div className="text-xs text-muted-foreground">#{j.ticket_no}</div>}
-                    </td>
-                    <td className="px-4 py-2.5 text-muted-foreground max-w-[240px] truncate">{j.address ?? "—"}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{j.status ?? j.order_type ?? "—"}</td>
-                    <td className="px-4 py-2.5">
-                      <span className={cn("inline-flex px-2 py-0.5 rounded-full text-xs font-medium", ageBadge(j.age_days))}>
-                        {j.age_days != null ? `${j.age_days}d` : "—"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{j.technician ?? "—"}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground text-xs max-w-[240px] truncate">{j.notes ?? j.last_activity ?? "—"}</td>
+                    <td className="px-4 py-2.5 font-medium whitespace-nowrap">{detailValue(j, "job_id_job_ref", j.job_no) ?? "-"}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground max-w-[260px] whitespace-pre-line">{detailValue(j, "purchase_order_customer_job_lines", detailValue(j, "purchase_order_customer_job", j.ticket_no)) ?? "-"}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{detailValue(j, "srv_int", j.order_type) ?? "-"}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{detailValue(j, "zone", j.status) ?? "-"}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{detailValue(j, "opened_first_ticket_lines", detailValue(j, "opened_first_ticket")) ?? "-"}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{detailValue(j, "last_ticket", j.last_activity) ?? "-"}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground max-w-[300px] whitespace-pre-line">{detailValue(j, "job_address_city_lines", detailValue(j, "job_address_city", j.address)) ?? "-"}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{detailValue(j, "foreman", j.technician) ?? "-"}</td>
                   </tr>
                 ))}
                 {filteredJobs.length === 0 && (
-                  <tr><td colSpan={6} className="text-center py-8 text-sm text-muted-foreground">No jobs match these filters.</td></tr>
+                  <tr><td colSpan={8} className="text-center py-8 text-sm text-muted-foreground">No jobs match these filters.</td></tr>
                 )}
               </tbody>
             </table>

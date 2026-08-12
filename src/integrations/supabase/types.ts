@@ -450,6 +450,42 @@ export type Database = {
         }
         Relationships: []
       }
+      system_logs: {
+        Row: {
+          action: string
+          actor_email: string | null
+          actor_id: string | null
+          created_at: string
+          entity_id: string | null
+          entity_type: string
+          id: string
+          metadata: Json
+          summary: string | null
+        }
+        Insert: {
+          action: string
+          actor_email?: string | null
+          actor_id?: string | null
+          created_at?: string
+          entity_id?: string | null
+          entity_type: string
+          id?: string
+          metadata?: Json
+          summary?: string | null
+        }
+        Update: {
+          action?: string
+          actor_email?: string | null
+          actor_id?: string | null
+          created_at?: string
+          entity_id?: string | null
+          entity_type?: string
+          id?: string
+          metadata?: Json
+          summary?: string | null
+        }
+        Relationships: []
+      }
       tickets: {
         Row: {
           city: string | null
@@ -597,6 +633,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      can_edit_page: { Args: { _page: string; _user_id: string }; Returns: boolean }
       ensure_demo_data: { Args: never; Returns: undefined }
       has_role: {
         Args: {
@@ -605,6 +642,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      is_staff: { Args: { _user_id: string }; Returns: boolean }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       sync_customers_from_open_jobs_upload: {
         Args: { p_upload_id: string }

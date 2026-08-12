@@ -134,9 +134,12 @@ export function calculateInvoiceCycleTime(tickets: TicketLike[], effectiveToIso:
   if (!effectiveTo) return null;
 
   const finalEditRows = tickets.filter((row) => isFinalEditTicket(row));
+  const finalEditedByRows = tickets.filter((row) => hasValue(row.final_edited_by));
   const sourceRows = finalEditRows.length
     ? finalEditRows
-    : tickets.filter((row) => hasValue(row.final_edited_by));
+    : finalEditedByRows.length
+      ? finalEditedByRows
+      : tickets;
   const deliverDates = sourceRows
     .map((row) => deliverPickupDateFromRow(row))
     .filter((date): date is Date => !!date && Number.isFinite(date.getTime()));

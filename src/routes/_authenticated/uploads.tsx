@@ -42,7 +42,7 @@ import {
   parseTicketQualityCountSheet,
   type ParseStats,
 } from "@/lib/parse";
-import { useAuth } from "@/lib/useAuth";
+import { canEdit, useAuth } from "@/lib/useAuth";
 import { useDemoMode } from "@/lib/demoMode";
 import { isSeededDemoUpload } from "@/lib/liveData";
 import {
@@ -69,6 +69,7 @@ import {
   type DemoUploadRecord,
 } from "@/lib/demoData";
 import { replaceSupersededUploads } from "@/lib/uploadReplacement";
+import { syncOpenJobCustomers } from "@/lib/customersServer";
 
 export const Route = createFileRoute("/_authenticated/uploads")({ component: UploadsPage });
 
@@ -268,9 +269,10 @@ function buildDemoUploadMetrics(
 
 function UploadsPage() {
   const qc = useQueryClient();
-  const { user, role, isSuperAdmin, loading: authLoading } = useAuth();
+  const auth = useAuth();
+  const { user, isSuperAdmin, loading: authLoading } = auth;
   const demoMode = useDemoMode();
-  const isAdmin = isSuperAdmin || role === "admin";
+  const canDeleteUploads = isSuperAdmin || canEdit(auth, "uploads");
   const defaultRange = defaultLast7DaysRange();
   const [kind, setKind] = useState<ReportKind>("active_review_final");
   const [effectiveFrom, setEffectiveFrom] = useState<string>(defaultRange.from);
@@ -450,26 +452,12 @@ function UploadsPage() {
             }, new Map<string, string>());
             if (customerPairs.size) {
               setUploadStage(`Updating ${customerPairs.size} customers...`);
-              const { error: syncError } = await supabase.rpc("sync_customers_from_open_jobs_upload", {
-                p_upload_id: up.id,
+              await syncOpenJobCustomers({
+                data: {
+                  uploadId: up.id,
+                  customers: Array.from(customerPairs, ([key, name]) => ({ key, name })),
+                },
               });
-              if (syncError) {
-                const customers = Array.from(customerPairs, ([key, name]) => ({
-                  key,
-                  name,
-                  updated_at: new Date().toISOString(),
-                }));
-                const { error } = await supabase
-                  .from("customers")
-                  .upsert(customers, { onConflict: "key" });
-                if (error) {
-                  customerSyncWarning = (
-                    "Open Jobs imported, but customers were not synced yet. Apply the Supabase migration " +
-                    "20260804154500_open_jobs_customer_sync_rpc.sql, then upload again or run the sync RPC."
-                  );
-                  console.warn("Open Jobs customer sync failed", { syncError, fallbackError: error });
-                }
-              }
             }
           } else if (kind === "ticket_quality") {
             const qualitySource = identifyTicketQualitySourceFromFileName(selectedFile.name);
@@ -657,7 +645,7 @@ function UploadsPage() {
     },
   });
 
-  // Non-admin: request deletion; Admin: delete immediately
+  // Users with upload edit access delete directly. View-only users cannot delete.
   const requestDelete = useMutation({
     mutationFn: async () => {
       if (!deleteTarget || !user) return;
@@ -744,6 +732,7 @@ function UploadsPage() {
     !effectiveFrom ||
     !effectiveTo ||
     effectiveFrom > effectiveTo ||
+    (!demoMode && !canEdit(auth, "uploads")) ||
     (!demoMode && authLoading);
 
   return (
@@ -855,7 +844,7 @@ function UploadsPage() {
         </div>
       </Card>
 
-      {isAdmin && pendingCount > 0 && (
+      {canDeleteUploads && pendingCount > 0 && (
         <Card className="p-6 border-warning/40 bg-warning/5">
           <h2 className="font-display text-lg font-semibold mb-3 flex items-center gap-2">
             <ShieldAlert className="w-4 h-4 text-warning" />
@@ -1010,14 +999,14 @@ function UploadsPage() {
                         <span className="text-xs text-warning font-medium ml-1">
                           Deletion pending
                         </span>
-                      ) : isAdmin ? (
+                      ) : canDeleteUploads ? (
                         <Button
                           size="sm"
                           variant="ghost"
                           onClick={() =>
                             confirm("Delete this upload and its data?") && adminDelete.mutate(u.id)
                           }
-                          title="Delete (admin)"
+                          title="Delete upload"
                         >
                           <Trash2 className="w-4 h-4 text-destructive" />
                         </Button>
@@ -1025,11 +1014,12 @@ function UploadsPage() {
                         <Button
                           size="sm"
                           variant="ghost"
+                          disabled
                           onClick={() => {
                             setDeleteTarget(u);
                             setDeleteReason("");
                           }}
-                          title="Request deletion"
+                          title="Ask an admin to enable Uploads edit access before deleting"
                         >
                           <Trash2 className="w-4 h-4 text-muted-foreground" />
                         </Button>

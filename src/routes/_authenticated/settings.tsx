@@ -11,7 +11,7 @@ import { useAuth, DEFAULT_PAGES } from "@/lib/useAuth";
 import { normalizeKpiTargets, type KpiTarget } from "@/lib/kpi";
 import { useState, useEffect, useMemo } from "react";
 import { Link, Navigate, Outlet, useLocation } from "@tanstack/react-router";
-import { Check, X, ShieldCheck, PencilLine, Send, Clock, CheckCircle2, XCircle, Eye, Edit3, BookOpen } from "lucide-react";
+import { Check, X, ShieldCheck, PencilLine, Send, Clock, CheckCircle2, XCircle, Eye, Edit3, BookOpen, LockKeyhole, UnlockKeyhole, ClipboardList } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/settings")({ component: SettingsRoute });
 
@@ -34,7 +34,7 @@ function SettingsRoute() {
 
 function SettingsPage() {
   const auth = useAuth();
-  const { user, role, isSuperAdmin, loading } = auth;
+  const { user, isSuperAdmin, loading } = auth;
   const qc = useQueryClient();
   const [editMode, setEditMode] = useState(false);
 
@@ -66,6 +66,19 @@ function SettingsPage() {
         roles: (roles.data ?? []) as any[],
         perms: (perms.data ?? []) as any[],
       };
+    },
+  });
+
+  const logsQ = useQuery({
+    queryKey: ["system_logs"],
+    enabled: isSuperAdmin,
+    queryFn: async () => {
+      const { data, error } = await (supabase.from as any)("system_logs")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      return (data ?? []) as any[];
     },
   });
 
@@ -138,8 +151,8 @@ function SettingsPage() {
       const row = {
         user_id: userId,
         page,
-        can_view: field === "can_view" ? value : existing?.can_view ?? true,
-        can_edit: field === "can_edit" ? value : existing?.can_edit ?? false,
+        can_view: field === "can_view" ? value : existing?.can_view ?? value,
+        can_edit: field === "can_edit" ? value : value ? existing?.can_edit ?? false : false,
         updated_by: user?.id,
         updated_at: new Date().toISOString(),
       };
@@ -147,6 +160,27 @@ function SettingsPage() {
       if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["all_profiles_and_roles"] }); },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const setUserAccess = useMutation({
+    mutationFn: async ({ userId, grant }: { userId: string; grant: boolean }) => {
+      const rows = DEFAULT_PAGES.map((page) => ({
+        user_id: userId,
+        page,
+        can_view: grant,
+        can_edit: grant,
+        updated_by: user?.id,
+        updated_at: new Date().toISOString(),
+      }));
+      const { error } = await (supabase.from as any)("page_permissions").upsert(rows, { onConflict: "user_id,page" });
+      if (error) throw error;
+    },
+    onSuccess: (_data, vars) => {
+      toast.success(vars.grant ? "User approved with full access" : "User access blocked");
+      qc.invalidateQueries({ queryKey: ["all_profiles_and_roles"] });
+      qc.invalidateQueries({ queryKey: ["system_logs"] });
+    },
     onError: (e: any) => toast.error(e.message),
   });
 
@@ -226,7 +260,7 @@ function SettingsPage() {
                 <ul className="space-y-2 text-sm">
                   {DEFAULT_PAGES.filter((p) => p !== "settings" && p !== "support").map((p) => {
                     const explicit = myPermsQ.data?.find((r) => r.page === p);
-                    const canV = explicit?.can_view ?? true;
+                    const canV = explicit?.can_view ?? false;
                     const canE = explicit?.can_edit ?? false;
                     return (
                       <li key={p} className="flex items-center justify-between rounded border px-3 py-2">
@@ -346,7 +380,7 @@ function SettingsPage() {
         <Card>
           <div className="px-6 py-4 border-b">
             <h2 className="font-display text-lg font-semibold">Users & page access</h2>
-            <p className="text-xs text-muted-foreground mt-1">Choose which pages each user can view and edit. Super admins always have full access.</p>
+            <p className="text-xs text-muted-foreground mt-1">New accounts start blocked. Approve company users, or block access to disconnect a user.</p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -354,6 +388,7 @@ function SettingsPage() {
                 <tr>
                   <th className="text-left px-4 py-3 font-medium">User</th>
                   <th className="text-left px-4 py-3 font-medium">Role</th>
+                  <th className="text-left px-4 py-3 font-medium">Access</th>
                   {DEFAULT_PAGES.filter((p) => p !== "settings" && p !== "support").map((p) => (
                     <th key={p} className="text-center px-2 py-3 font-medium">{PAGE_LABELS[p] ?? p}</th>
                   ))}
@@ -362,6 +397,7 @@ function SettingsPage() {
               <tbody>
                 {Array.from(usersById.entries()).map(([uid, u]) => {
                   const isSuper = u.roles.includes("super_admin");
+                  const hasAccess = DEFAULT_PAGES.some((page) => !!u.perms[page]?.can_view);
                   return (
                     <tr key={uid} className="border-t">
                       <td className="px-4 py-3">
@@ -373,8 +409,32 @@ function SettingsPage() {
                           {isSuper ? "super admin" : u.roles.includes("admin") ? "admin" : "user"}
                         </span>
                       </td>
+                      <td className="px-4 py-3">
+                        {isSuper ? (
+                          <span className="text-xs text-primary">always on</span>
+                        ) : hasAccess ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-1.5"
+                            onClick={() => setUserAccess.mutate({ userId: uid, grant: false })}
+                            disabled={setUserAccess.isPending}
+                          >
+                            <LockKeyhole className="w-3.5 h-3.5" />Block
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            className="gap-1.5"
+                            onClick={() => setUserAccess.mutate({ userId: uid, grant: true })}
+                            disabled={setUserAccess.isPending}
+                          >
+                            <UnlockKeyhole className="w-3.5 h-3.5" />Approve
+                          </Button>
+                        )}
+                      </td>
                       {DEFAULT_PAGES.filter((p) => p !== "settings" && p !== "support").map((p) => {
-                        const cur = u.perms[p] ?? { can_view: true, can_edit: false };
+                        const cur = u.perms[p] ?? { can_view: false, can_edit: false };
                         return (
                           <td key={p} className="px-2 py-3 text-center">
                             {isSuper ? (
@@ -404,7 +464,50 @@ function SettingsPage() {
                   );
                 })}
                 {usersById.size === 0 && (
-                  <tr><td colSpan={DEFAULT_PAGES.length} className="text-center py-8 text-muted-foreground text-sm">No users yet.</td></tr>
+                  <tr><td colSpan={DEFAULT_PAGES.length + 1} className="text-center py-8 text-muted-foreground text-sm">No users yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {isSuperAdmin && (
+        <Card>
+          <div className="px-6 py-4 border-b flex items-center gap-2">
+            <ClipboardList className="w-4 h-4 text-primary" />
+            <div>
+              <h2 className="font-display text-lg font-semibold">System logs</h2>
+              <p className="text-xs text-muted-foreground">Uploads, deletes, and new account notifications.</p>
+            </div>
+          </div>
+          <div className="max-h-[420px] overflow-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/70 text-xs uppercase text-muted-foreground sticky top-0">
+                <tr>
+                  <th className="text-left px-4 py-3 font-medium">When</th>
+                  <th className="text-left px-4 py-3 font-medium">Actor</th>
+                  <th className="text-left px-4 py-3 font-medium">Action</th>
+                  <th className="text-left px-4 py-3 font-medium">Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(logsQ.data ?? []).map((log) => (
+                  <tr key={log.id} className="border-t">
+                    <td className="px-4 py-2.5 whitespace-nowrap text-muted-foreground">
+                      {new Date(log.created_at).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-2.5">{log.actor_email ?? "System"}</td>
+                    <td className="px-4 py-2.5">
+                      <span className="rounded bg-muted px-2 py-0.5 text-xs font-medium uppercase">
+                        {String(log.action ?? "").replace(/_/g, " ")}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{log.summary ?? log.entity_type}</td>
+                  </tr>
+                ))}
+                {!logsQ.isLoading && (logsQ.data ?? []).length === 0 && (
+                  <tr><td colSpan={4} className="text-center py-8 text-muted-foreground text-sm">No logs yet.</td></tr>
                 )}
               </tbody>
             </table>

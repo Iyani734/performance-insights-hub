@@ -37,15 +37,8 @@ export const replaceSupersededUploads = createServerFn({ method: "POST" })
     if (newUploadsError) throw newUploadsError;
     if (!newUploads?.length) return { deleted: 0, storageErrors: [] as string[] };
 
-    const { data: roles, error: rolesError } = await supabaseAdmin
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", context.userId);
-    if (rolesError) throw rolesError;
-    const isAdmin = (roles ?? []).some((row) => row.role === "admin" || row.role === "super_admin");
-    const ownsAllNewUploads = (newUploads as UploadRow[]).every((upload) => upload.uploaded_by === context.userId);
-    if (!isAdmin && !ownsAllNewUploads) {
-      throw new Error("You can only replace uploads created by your own account.");
+    if (!(await canEditUploads(supabaseAdmin, context.userId))) {
+      throw new Error("You need Uploads edit access before replacing older uploads.");
     }
 
     const kinds = Array.from(
@@ -123,4 +116,15 @@ function addDaysUtc(iso: string, days: number) {
   const date = new Date(`${iso}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+async function canEditUploads(supabaseAdmin: any, userId: string) {
+  const [{ data: roles, error: rolesError }, { data: perm, error: permError }] = await Promise.all([
+    supabaseAdmin.from("user_roles").select("role").eq("user_id", userId),
+    supabaseAdmin.from("page_permissions").select("can_edit").eq("user_id", userId).eq("page", "uploads").maybeSingle(),
+  ]);
+  if (rolesError) throw rolesError;
+  if (permError) throw permError;
+  if ((roles ?? []).some((row: any) => row.role === "super_admin")) return true;
+  return !!perm?.can_edit;
 }

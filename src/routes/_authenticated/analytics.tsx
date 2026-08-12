@@ -12,7 +12,7 @@ import { DateRangeSelect, type DateRange } from "@/components/DateRangeSelect";
 import { useDemoMode } from "@/lib/demoMode";
 import { addDays, DEMO_TARGETS, DEMO_WEEKS, demoAutoKpisForRange, demoKpiValues } from "@/lib/demoData";
 import { isSeededDemoPayload, isSeededDemoSource, isSeededDemoUpload } from "@/lib/liveData";
-import { normalizeTicketStatus } from "@/lib/kpiRules";
+import { deliverPickupDateFromRow, normalizeTicketStatus } from "@/lib/kpiRules";
 import { isActiveReviewFinalUpload } from "@/lib/reportTypes";
 import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
 
@@ -43,7 +43,10 @@ function buildTicketStatusRows(rows: any[]): TicketStatusRow[] {
   const byWeek = new Map<string, TicketStatusRow>();
 
   for (const row of rows) {
-    const week = String(row.week_start ?? "").slice(0, 10);
+    const deliverPickupDate = deliverPickupDateFromRow(row);
+    const week = deliverPickupDate
+      ? deliverPickupDate.toISOString().slice(0, 10)
+      : String(row.week_start ?? "").slice(0, 10);
     if (!week) continue;
 
     if (!byWeek.has(week)) {

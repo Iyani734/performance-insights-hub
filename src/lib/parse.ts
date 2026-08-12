@@ -37,7 +37,7 @@ export type ParsedCountRow = {
   occurrence_date?: string | null;
 };
 
-function toISODate(v: any): string | null {
+export function toISODate(v: any): string | null {
   if (!v) return null;
   if (v instanceof Date) return v.toISOString();
   if (typeof v === "number") {
@@ -330,42 +330,120 @@ export function parseOpenJobsSheet(wb: XLSX.WorkBook): { rows: ParsedOpenJob[]; 
     return { rows, stats };
   }
 
-  // Fallback: the grouped section-header layout
+  // Fallback: the grouped section-header layout used by the Current Open Jobs List.
   const arrRows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1, defval: null });
-  stats.source_rows = arrRows.length;
   const rows: ParsedOpenJob[] = [];
   let currentKey = "UNKNOWN";
   let currentName = "Unknown Customer";
+  let currentDeclaredJobCount: number | undefined;
+  let currentJob: ParsedOpenJob | null = null;
+
   arrRows.forEach((row, i) => {
     if (!row || row.every((c) => c == null || String(c).trim() === "")) return;
     const first = row[0] ? String(row[0]).trim() : "";
     const m = first.match(/^Customer:\s*([^\s-]+)\s*-\s*(.+)$/i);
-    if (m) { currentKey = m[1].trim(); currentName = m[2].trim(); return; }
-    if (/^Job #|^Ticket|^-{3,}/i.test(first)) return;
-    if (/Job Count:/i.test(String(row[row.length - 1] ?? ""))) return;
+    if (m) {
+      currentKey = m[1].trim();
+      currentName = m[2].trim();
+      currentDeclaredJobCount = jobCountFromRow(row);
+      currentJob = null;
+      return;
+    }
+    if (/^Current Open Jobs List$/i.test(first)) return;
+    if (/^Job ID|^Job #|^Ticket|^-{3,}/i.test(first)) return;
+    if (/Most Recent Activity/i.test(row.map((cell) => String(cell ?? "")).join(" "))) return;
     const cells = row.map((c) => (c == null ? "" : String(c).trim()));
     if (cells.every(c => c === "")) return;
+
+    if (!cells[0]) {
+      if (currentJob) mergeOpenJobContinuation(currentJob, cells, i + 1);
+      return;
+    }
+
     try {
-      rows.push({
+      currentJob = {
         customer_key: currentKey,
         customer_name: currentName,
         job_no: cells[0] || undefined,
         ticket_no: cells[1] || undefined,
         order_type: cells[2] || undefined,
-        address: cells[3] || undefined,
-        status: cells[4] || undefined,
-        technician: cells[6] || undefined,
+        status: cells[3] || undefined,
+        address: cells[6] || undefined,
+        technician: cells[7] || undefined,
         last_activity: cells[5] || undefined,
-        age_days: daysBetween(cells[5]),
-        details: { row: cells },
-      });
+        age_days: daysBetween(toISODate(cells[4]) ?? null),
+        notes: cells[6] || undefined,
+        details: {
+          layout: "grouped_open_jobs",
+          customer_key: currentKey,
+          customer_name: currentName,
+          declared_job_count: currentDeclaredJobCount ?? null,
+          excel_row: i + 1,
+          job_id_job_ref: cells[0] || null,
+          purchase_order_customer_job: cells[1] || null,
+          srv_int: cells[2] || null,
+          zone: cells[3] || null,
+          opened_first_ticket: toISODate(cells[4])?.slice(0, 10) ?? (cells[4] || null),
+          last_ticket: toISODate(cells[5])?.slice(0, 10) ?? (cells[5] || null),
+          job_address_city: cells[6] || null,
+          foreman: cells[7] || null,
+          continuation_rows: [],
+        },
+      };
+      rows.push(currentJob);
       stats.imported++;
     } catch (e: any) {
       stats.errors++;
       stats.error_details.push({ row: i + 1, reason: e?.message ?? "parse error" });
     }
   });
+  stats.source_rows = rows.length;
   return { rows, stats };
+}
+
+function jobCountFromRow(row: any[]) {
+  for (const cell of row) {
+    const match = String(cell ?? "").match(/Job Count:\s*(\d+)/i);
+    if (match) return Number(match[1]);
+  }
+  return undefined;
+}
+
+function mergeOpenJobContinuation(job: ParsedOpenJob, cells: string[], rowNumber: number) {
+  const details = job.details as Record<string, any>;
+  const continuation = {
+    excel_row: rowNumber,
+    purchase_order_customer_job: cells[1] || null,
+    opened_first_ticket: toISODate(cells[4])?.slice(0, 10) ?? (cells[4] || null),
+    last_ticket: toISODate(cells[5])?.slice(0, 10) ?? (cells[5] || null),
+    job_address_city: cells[6] || null,
+    foreman: cells[7] || null,
+  };
+  details.continuation_rows = [...((details.continuation_rows as any[]) ?? []), continuation];
+
+  if (cells[1]) {
+    details.purchase_order_customer_job_lines = [
+      ...((details.purchase_order_customer_job_lines as string[]) ?? [String(details.purchase_order_customer_job ?? "")].filter(Boolean)),
+      cells[1],
+    ];
+    job.ticket_no = [job.ticket_no, cells[1]].filter(Boolean).join(" / ");
+  }
+  if (cells[4]) {
+    details.opened_first_ticket_lines = [
+      ...((details.opened_first_ticket_lines as string[]) ?? [String(details.opened_first_ticket ?? "")].filter(Boolean)),
+      toISODate(cells[4])?.slice(0, 10) ?? cells[4],
+    ];
+  }
+  if (cells[6]) {
+    details.job_address_city_lines = [
+      ...((details.job_address_city_lines as string[]) ?? [String(details.job_address_city ?? "")].filter(Boolean)),
+      cells[6],
+    ];
+    job.address = [job.address, cells[6]].filter(Boolean).join(" / ");
+    job.notes = job.address;
+  }
+  if (cells[7] && !job.technician) job.technician = cells[7];
+  if (cells[7] && !details.foreman) details.foreman = cells[7];
 }
 
 export function downloadXlsx(rows: any[], filename: string) {

@@ -9,6 +9,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Activity, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { disableDemoMode } from "@/lib/demoMode";
+import { notifyAdminsOfSignup } from "@/lib/adminNotifications";
 
 export const Route = createFileRoute("/auth")({ component: AuthPage });
 
@@ -63,6 +64,10 @@ function AuthPage() {
 
         if (signUpData.user && nickname) {
           await supabase.from("profiles").update({ full_name: nickname }).eq("id", signUpData.user.id);
+        }
+
+        if (signUpData.user?.id) {
+          notifyAdminsOfSignup({ data: { userId: signUpData.user.id } }).catch(() => undefined);
         }
 
         setNotice(
