@@ -342,16 +342,18 @@ export function parseOpenJobsSheet(wb: XLSX.WorkBook): { rows: ParsedOpenJob[]; 
   let currentKey = "UNKNOWN";
   let currentName = "Unknown Customer";
   let currentDeclaredJobCount: number | undefined;
+  let currentImportedJobCount = 0;
   let currentJob: ParsedOpenJob | null = null;
 
   arrRows.forEach((row, i) => {
     if (!row || row.every((c) => c == null || String(c).trim() === "")) return;
     const first = row[0] ? String(row[0]).trim() : "";
-    const m = first.match(/^Customer:\s*([^\s-]+)\s*-\s*(.+)$/i);
-    if (m) {
-      currentKey = m[1].trim();
-      currentName = m[2].trim();
+    const customerHeader = parseGroupedCustomerHeader(first);
+    if (customerHeader) {
+      currentKey = customerHeader.key;
+      currentName = customerHeader.name;
       currentDeclaredJobCount = jobCountFromRow(row);
+      currentImportedJobCount = 0;
       currentJob = null;
       return;
     }
@@ -366,6 +368,11 @@ export function parseOpenJobsSheet(wb: XLSX.WorkBook): { rows: ParsedOpenJob[]; 
       return;
     }
     if (!isGroupedOpenJobId(cells[0])) {
+      stats.skipped++;
+      return;
+    }
+    if (currentDeclaredJobCount != null && currentImportedJobCount >= currentDeclaredJobCount) {
+      currentJob = null;
       stats.skipped++;
       return;
     }
@@ -401,6 +408,7 @@ export function parseOpenJobsSheet(wb: XLSX.WorkBook): { rows: ParsedOpenJob[]; 
         },
       };
       rows.push(currentJob);
+      currentImportedJobCount++;
       stats.imported++;
     } catch (e: any) {
       stats.errors++;
@@ -409,6 +417,20 @@ export function parseOpenJobsSheet(wb: XLSX.WorkBook): { rows: ParsedOpenJob[]; 
   });
   stats.source_rows = rows.length;
   return { rows, stats };
+}
+
+function parseGroupedCustomerHeader(value: string) {
+  const body = value.match(/^Customer:\s*(.+)$/i)?.[1]?.trim();
+  if (!body) return null;
+
+  const spacedNameDelimiter = body.match(/\s-\s{2,}(?!.*\s-\s{2,})/);
+  const splitAt = spacedNameDelimiter?.index ?? body.lastIndexOf(" - ");
+  if (splitAt < 0) return null;
+
+  const key = body.slice(0, splitAt).trim();
+  const name = body.slice(splitAt).replace(/^\s*-\s*/, "").trim();
+  if (!key || !name) return null;
+  return { key, name };
 }
 
 function jobCountFromRow(row: any[]) {
