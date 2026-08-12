@@ -14,6 +14,7 @@ import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_WEEKS, demoOpenJobs } from "@/lib/demoData";
 import { isSeededDemoPayload } from "@/lib/liveData";
 import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
+import { uniqueOpenJobs } from "@/lib/openJobs";
 
 export const Route = createFileRoute("/_authenticated/open-jobs")({ component: OpenJobsPage });
 
@@ -74,7 +75,7 @@ function OpenJobsPage() {
           .order("customer_name")
           .range(from, to),
       );
-      return data.filter((row) => !isSeededDemoPayload(row.details));
+      return uniqueOpenJobs(data.filter((row) => !isSeededDemoPayload(row.details)));
     },
     enabled: !!selectedWeek,
   });

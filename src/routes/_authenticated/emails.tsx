@@ -28,6 +28,7 @@ import { DEMO_WEEKS, demoCustomers, demoEmailJobs, demoOpenJobs } from "@/lib/de
 import { isSeededDemoEmail, isSeededDemoPayload } from "@/lib/liveData";
 import { sendOpenJobsEmails } from "@/lib/emailSend";
 import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
+import { uniqueOpenJobs } from "@/lib/openJobs";
 
 export const Route = createFileRoute("/_authenticated/emails")({ component: EmailsPage });
 
@@ -100,7 +101,7 @@ function EmailsPage() {
       const data = await fetchAllSupabaseRows<any>((from, to) =>
         supabase.from("open_jobs").select("*").eq("week_start", w).range(from, to),
       );
-      return data.filter((row) => !isSeededDemoPayload(row.details));
+      return uniqueOpenJobs(data.filter((row) => !isSeededDemoPayload(row.details)));
     },
     enabled: !!w,
   });

@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
+import { uniqueOpenJobs } from "@/lib/openJobs";
 import { z } from "zod";
 
 type OpenJobRow = {
@@ -63,7 +64,7 @@ export const sendOpenJobsEmails = createServerFn({ method: "POST" })
     );
 
     const jobsByCustomer = new Map<string, OpenJobRow[]>();
-    for (const job of jobsData ?? []) {
+    for (const job of uniqueOpenJobs(jobsData ?? [])) {
       const key = String(job.customer_key ?? "").trim();
       if (!key) continue;
       const rows = jobsByCustomer.get(key) ?? [];

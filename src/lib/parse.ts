@@ -365,6 +365,10 @@ export function parseOpenJobsSheet(wb: XLSX.WorkBook): { rows: ParsedOpenJob[]; 
       if (currentJob) mergeOpenJobContinuation(currentJob, cells, i + 1);
       return;
     }
+    if (!isGroupedOpenJobId(cells[0])) {
+      stats.skipped++;
+      return;
+    }
 
     try {
       currentJob = {
@@ -377,7 +381,7 @@ export function parseOpenJobsSheet(wb: XLSX.WorkBook): { rows: ParsedOpenJob[]; 
         address: cells[6] || undefined,
         technician: cells[7] || undefined,
         last_activity: cells[5] || undefined,
-        age_days: daysBetween(toISODate(cells[4]) ?? null),
+        age_days: daysBetween(toISODate(row[4]) ?? null),
         notes: cells[6] || undefined,
         details: {
           layout: "grouped_open_jobs",
@@ -389,8 +393,8 @@ export function parseOpenJobsSheet(wb: XLSX.WorkBook): { rows: ParsedOpenJob[]; 
           purchase_order_customer_job: cells[1] || null,
           srv_int: cells[2] || null,
           zone: cells[3] || null,
-          opened_first_ticket: toISODate(cells[4])?.slice(0, 10) ?? (cells[4] || null),
-          last_ticket: toISODate(cells[5])?.slice(0, 10) ?? (cells[5] || null),
+          opened_first_ticket: toISODate(row[4])?.slice(0, 10) ?? (cells[4] || null),
+          last_ticket: toISODate(row[5])?.slice(0, 10) ?? (cells[5] || null),
           job_address_city: cells[6] || null,
           foreman: cells[7] || null,
           continuation_rows: [],
@@ -413,6 +417,10 @@ function jobCountFromRow(row: any[]) {
     if (match) return Number(match[1]);
   }
   return undefined;
+}
+
+function isGroupedOpenJobId(value: string) {
+  return /^\d{3,}$/.test(value.trim());
 }
 
 function mergeOpenJobContinuation(job: ParsedOpenJob, cells: string[], rowNumber: number) {

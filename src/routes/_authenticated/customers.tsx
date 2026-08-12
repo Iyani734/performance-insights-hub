@@ -18,6 +18,7 @@ import { DEMO_CURRENT_WEEK, demoCustomers, demoOpenJobs } from "@/lib/demoData";
 import { isSeededDemoEmail, isSeededDemoPayload } from "@/lib/liveData";
 import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
 import { deleteCustomer, upsertCustomer } from "@/lib/customersServer";
+import { uniqueOpenJobs } from "@/lib/openJobs";
 
 export const Route = createFileRoute("/_authenticated/customers")({ component: CustomersPage });
 
@@ -64,12 +65,12 @@ function CustomersPage() {
       const data = await fetchAllSupabaseRows<any>((from, to) =>
         supabase
           .from("open_jobs")
-          .select("customer_key,customer_name,details,week_start")
+          .select("customer_key,customer_name,job_no,details,week_start")
           .order("week_start", { ascending: false })
           .range(from, to),
       );
       const map = new Map<string, any>();
-      for (const row of data) {
+      for (const row of uniqueOpenJobs(data)) {
         if (isSeededDemoPayload(row.details)) continue;
         const key = String(row.customer_key ?? "").trim();
         const name = String(row.customer_name ?? "").trim();
@@ -111,12 +112,14 @@ function CustomersPage() {
       const data = await fetchAllSupabaseRows<any>((from, to) =>
         supabase
           .from("open_jobs")
-          .select("customer_key,details")
+          .select("customer_key,job_no,details")
           .eq("week_start", week)
           .range(from, to),
       );
       const map: Record<string, number> = {};
-      for (const r of data) if (!isSeededDemoPayload(r.details)) map[r.customer_key] = (map[r.customer_key] ?? 0) + 1;
+      for (const r of uniqueOpenJobs(data.filter((row) => !isSeededDemoPayload(row.details)))) {
+        map[r.customer_key] = (map[r.customer_key] ?? 0) + 1;
+      }
       return map;
     },
   });
