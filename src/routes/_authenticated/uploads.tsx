@@ -465,9 +465,9 @@ function UploadsPage() {
               const payload = parsed.rows.map((r) => ({
                 upload_id: up.id,
                 week_start: uploadBucket,
-                kind: "quality_error",
+                kind: "tickets",
                 date_recv: r.occurrence_date,
-                raw: r.raw,
+                raw: { ...r.raw, source_type: "ticket_quality_error" },
               }));
               setUploadStage(`Importing ${payload.length} quality error rows from ${selectedFile.name}...`);
               await insertBatches(payload, async (batch) => {

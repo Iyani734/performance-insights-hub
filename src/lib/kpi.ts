@@ -237,9 +237,8 @@ async function fetchQualityErrorRowsByUploadIds(uploadIds: string[], fromIso: st
   const data = await fetchAllSupabaseRows<any>((from, to) =>
     supabase
       .from("tickets")
-      .select("upload_id,date_recv,kind,raw")
+      .select("upload_id,date_recv,raw")
       .in("upload_id", uploadIds)
-      .eq("kind", "quality_error" as any)
       .gte("date_recv", `${fromIso}T00:00:00.000Z`)
       .lte("date_recv", `${toIso}T23:59:59.999Z`)
       .range(from, to),
