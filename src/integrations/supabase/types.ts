@@ -621,7 +621,7 @@ export type Database = {
         | "ticket_quality"
         | "total_cycle_time"
         | "open_jobs"
-      ticket_kind: "tickets" | "invoiced"
+      ticket_kind: "tickets" | "invoiced" | "quality_error"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -759,7 +759,7 @@ export const Constants = {
         "total_cycle_time",
         "open_jobs",
       ],
-      ticket_kind: ["tickets", "invoiced"],
+      ticket_kind: ["tickets", "invoiced", "quality_error"],
     },
   },
 } as const

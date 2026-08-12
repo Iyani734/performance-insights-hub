@@ -17,6 +17,7 @@ export type ParsedTicket = {
   date_recv?: string | null;
   final_edited_by?: string;
   void_reason?: string;
+  occurrence_date?: string | null;
   raw: Record<string, any>;
 };
 
@@ -33,6 +34,7 @@ export type TicketQualityCountSource = "errors" | "total";
 
 export type ParsedCountRow = {
   raw: Record<string, any>;
+  occurrence_date?: string | null;
 };
 
 function toISODate(v: any): string | null {
@@ -120,6 +122,7 @@ export function parseTicketsSheet(wb: XLSX.WorkBook): { rows: ParsedTicket[]; st
 export function parseTicketQualityCountSheet(
   wb: XLSX.WorkBook,
   source: TicketQualityCountSource,
+  range?: { from: string; to: string },
 ): { rows: ParsedCountRow[]; stats: ParseStats } {
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json<any[]>(sheet, {
@@ -151,7 +154,18 @@ export function parseTicketQualityCountSheet(
         stats.skipped++;
         return;
       }
-      parsedRows.push({ raw: record });
+      const occurrenceDate = source === "errors" ? ticketQualityOccurrenceDate(record) : null;
+      if (source === "errors") {
+        if (!occurrenceDate) {
+          stats.skipped++;
+          return;
+        }
+        if (range && !isIsoDateInRange(occurrenceDate, range.from, range.to)) {
+          stats.skipped++;
+          return;
+        }
+      }
+      parsedRows.push({ raw: record, occurrence_date: occurrenceDate });
       stats.imported++;
     } catch (e: any) {
       stats.errors++;
@@ -160,6 +174,10 @@ export function parseTicketQualityCountSheet(
   });
 
   return { rows: parsedRows, stats };
+}
+
+export function countTicketQualityErrorsInRange(rows: ParsedCountRow[], from: string, to: string) {
+  return rows.filter((row) => row.occurrence_date && isIsoDateInRange(row.occurrence_date, from, to)).length;
 }
 
 function hasHeader(row: Record<string, any>, header: string) {
@@ -212,6 +230,39 @@ function isCountableRow(record: Record<string, any>, row: any[], source: TicketQ
     hasAnyNormalizedRecordValue(record, ["name"]) &&
     hasAnyNormalizedRecordValue(record, ["ticketnumber", "infractiontype", "infractionsummary"])
   );
+}
+
+function ticketQualityOccurrenceDate(record: Record<string, any>) {
+  const keys = [
+    "Date of Occurance",
+    "Date of Occurrence",
+    "Occurrence Date",
+    "Occurance Date",
+    "Infraction Date",
+    "Date",
+  ];
+
+  for (const key of keys) {
+    const value = valueForHeader(record, key);
+    const date = toISODate(value);
+    if (date) return date.slice(0, 10);
+  }
+  return null;
+}
+
+function valueForHeader(record: Record<string, any>, header: string) {
+  const wanted = normalizeHeader(header);
+  const exact = Object.entries(record).find(([key]) => normalizeHeader(key) === wanted);
+  if (exact) return exact[1];
+  const partial = Object.entries(record).find(([key]) => {
+    const normalized = normalizeHeader(key);
+    return normalized.includes("date") && (normalized.includes("occur") || normalized.includes("infraction"));
+  });
+  return partial?.[1];
+}
+
+function isIsoDateInRange(iso: string, from: string, to: string) {
+  return iso >= from && iso <= to;
 }
 
 function hasAnyNormalizedRecordValue(record: Record<string, any>, normalizedKeys: string[]) {

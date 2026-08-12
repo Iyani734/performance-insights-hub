@@ -51,9 +51,9 @@ const METRICS: MetricSpec[] = [
     label: "Ticket Quality",
     target: "< 3%",
     source: "Ticket Quality and TCR Total exports. File names must include Ticket Quality or TCR Total.",
-    formula: "Ticket Quality error rows / TCR Total rows x 100",
-    columns: ["Ticket Quality data rows", "TCR Total data rows"],
-    why: "The ARC metric is a quality-error rate, so lower is better. The dashboard waits until both source files exist for the selected date range.",
+    formula: "Ticket Quality error rows dated inside the selected range / TCR Total rows x 100",
+    columns: ["Ticket Quality Date of Occurance / Date of Occurrence", "TCR Total data rows"],
+    why: "The ARC metric is a quality-error rate, so lower is better. The dashboard counts only dated error occurrences inside the selected range and waits until both source files exist.",
   },
   {
     key: "dispatch_responsiveness",
@@ -192,7 +192,7 @@ function HowItWorks() {
                   Ticket QC uses TicketQC FINAL rows divided by TicketQC REVIEW rows
                 </li>
                 <li>
-                  Ticket Quality uses Ticket Quality rows divided by TCR Total rows
+                  Ticket Quality uses dated Ticket Quality error rows divided by TCR Total rows
                 </li>
               </ul>
             </div>

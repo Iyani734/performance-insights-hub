@@ -471,7 +471,23 @@ function UploadsPage() {
                 }
               }
             }
-          } else if (kind !== "ticket_qc" && kind !== "ticket_quality") {
+          } else if (kind === "ticket_quality") {
+            const qualitySource = identifyTicketQualitySourceFromFileName(selectedFile.name);
+            if (qualitySource === "errors") {
+              const payload = parsed.rows.map((r) => ({
+                upload_id: up.id,
+                week_start: uploadBucket,
+                kind: "quality_error",
+                date_recv: r.occurrence_date,
+                raw: r.raw,
+              }));
+              setUploadStage(`Importing ${payload.length} quality error rows from ${selectedFile.name}...`);
+              await insertBatches(payload, async (batch) => {
+                const { error } = await supabase.from("tickets").insert(batch as any);
+                if (error) throw error;
+              });
+            }
+          } else if (kind !== "ticket_qc") {
             const tKind = kind === "active_review_final" ? "tickets" : "invoiced";
             const payload = parsed.rows.map((r) => ({
               ...r,

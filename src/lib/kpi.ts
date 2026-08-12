@@ -118,14 +118,19 @@ export async function computeAutoKpisForRange(from: string, to: string) {
   const qualityUploads = uploads.filter(isTicketQualityUpload);
   const cycleUploads = uploads.filter(isTotalCycleTimeUpload);
 
-  const [tickets, cycleRows] = await Promise.all([
+  const [tickets, cycleRows, qualityErrorRows] = await Promise.all([
     fetchTicketRowsByUploadIds(activeUploads.map((upload) => upload.id), "tickets"),
     fetchTicketRowsByUploadIds(cycleUploads.map((upload) => upload.id), "invoiced"),
+    fetchQualityErrorRowsByUploadIds(
+      qualityUploads.filter(isTicketQualityErrorUpload).map((upload) => upload.id),
+      from,
+      to,
+    ),
   ]);
 
   const statusMatches = (status: unknown, value: string) => normalizeTicketStatus(status) === value;
   const ticketQc = calculateTicketQcReviewToFinal(qcUploads);
-  const ticketQuality = calculateTicketQualityFromUploads(qualityUploads);
+  const ticketQuality = calculateTicketQualityFromUploads(qualityUploads, qualityErrorRows.length);
   const totalCycleTime = calculateTotalCycleTime(cycleRows);
 
   return {
@@ -211,10 +216,10 @@ function calculateTicketQcReviewToFinal(uploads: UploadLike[]) {
   };
 }
 
-function calculateTicketQualityFromUploads(uploads: UploadLike[]) {
+function calculateTicketQualityFromUploads(uploads: UploadLike[], errorRowsInRange: number) {
   const errorUpload = latestUpload(uploads.filter(isTicketQualityErrorUpload));
   const totalUpload = latestUpload(uploads.filter(isTcrTotalUpload));
-  const errorRows = errorUpload ? sumImportedRows([errorUpload]) : 0;
+  const errorRows = errorUpload ? errorRowsInRange : 0;
   const totalRows = totalUpload ? sumImportedRows([totalUpload]) : 0;
 
   return {
@@ -222,6 +227,22 @@ function calculateTicketQualityFromUploads(uploads: UploadLike[]) {
     totalRows,
     actual: errorUpload && totalUpload && totalRows > 0 ? (errorRows / totalRows) * 100 : null,
   };
+}
+
+async function fetchQualityErrorRowsByUploadIds(uploadIds: string[], fromIso: string, toIso: string) {
+  if (!uploadIds.length) return [];
+  const data = await fetchAllSupabaseRows<any>((from, to) =>
+    supabase
+      .from("tickets")
+      .select("upload_id,date_recv,kind,raw")
+      .in("upload_id", uploadIds)
+      .eq("kind", "quality_error" as any)
+      .gte("date_recv", `${fromIso}T00:00:00.000Z`)
+      .lte("date_recv", `${toIso}T23:59:59.999Z`)
+      .range(from, to),
+  );
+
+  return data.filter((row) => !isSeededDemoPayload(row.raw));
 }
 
 function latestUpload(uploads: UploadLike[]) {
