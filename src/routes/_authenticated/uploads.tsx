@@ -68,6 +68,7 @@ import {
   type DemoUploadMetrics,
   type DemoUploadRecord,
 } from "@/lib/demoData";
+import { replaceSupersededUploads } from "@/lib/uploadReplacement";
 
 export const Route = createFileRoute("/_authenticated/uploads")({ component: UploadsPage });
 
@@ -338,6 +339,7 @@ function UploadsPage() {
   const upload = useMutation({
     mutationFn: async (selectedFiles: File[]) => {
       validateUploadSelection(selectedFiles, kind);
+      const completedUploadIds: string[] = [];
 
       const processOneFile = async (selectedFile: File) => {
         const t0 = performance.now();
@@ -499,6 +501,7 @@ function UploadsPage() {
             })
             .eq("id", up.id);
           if (reportUpdateError) throw reportUpdateError;
+          completedUploadIds.push(up.id);
 
           if (kind !== "open_jobs") {
             setUploadStage("Calculating dashboard metrics...");
@@ -548,6 +551,42 @@ function UploadsPage() {
         results.push(await processOneFile(selectedFile));
       }
 
+      let replacedUploads = 0;
+      let replacementWarnings: string[] = [];
+      if (!demoMode && completedUploadIds.length) {
+        setUploadStage("Replacing older files for this date range...");
+        try {
+          const replacement = await replaceSupersededUploads({
+            data: { uploadIds: completedUploadIds },
+          });
+          replacedUploads = replacement.deleted;
+          replacementWarnings = replacement.storageErrors ?? [];
+        } catch (error: any) {
+          replacementWarnings = [
+            `The new upload succeeded, but older matching uploads were not removed: ${error?.message ?? "Unknown error"}`,
+          ];
+        }
+      }
+
+      if (!demoMode && kind !== "open_jobs") {
+        setUploadStage("Refreshing dashboard metrics...");
+        const { computeAutoKpisForRange } = await import("@/lib/kpi");
+        const auto = await computeAutoKpisForRange(effectiveFrom, effectiveTo);
+        const upserts = [
+          { kpi_key: "review_to_final_edit", actual: auto.review_to_final_edit },
+          { kpi_key: "ticket_quality", actual: auto.ticket_quality },
+          { kpi_key: "invoice_cycle_time", actual: auto.invoice_cycle_time },
+        ]
+          .filter((value) => value.actual != null)
+          .map((value) => ({ ...value, week_start: uploadBucket, source: "auto", entered_by: user!.id }));
+        if (upserts.length) {
+          const { error: kpiError } = await supabase
+            .from("kpi_values")
+            .upsert(upserts, { onConflict: "kpi_key,week_start" });
+          if (kpiError) throw kpiError;
+        }
+      }
+
       return {
         stats: mergeStats(results.map((result) => result.stats)),
         demoUploads: results.map((result) => result.demoUpload).filter(Boolean) as DemoUploadRecord[],
@@ -555,9 +594,18 @@ function UploadsPage() {
           .map((result) => result.customerSyncWarning)
           .filter((message): message is string => !!message),
         ticketQcWaiting: results.some((result) => result.ticketQcWaiting),
+        replacedUploads,
+        replacementWarnings,
       };
     },
-    onSuccess: ({ stats: s, demoUploads: uploadedDemoRows, customerSyncWarnings, ticketQcWaiting }) => {
+    onSuccess: ({
+      stats: s,
+      demoUploads: uploadedDemoRows,
+      customerSyncWarnings,
+      ticketQcWaiting,
+      replacedUploads,
+      replacementWarnings,
+    }) => {
       if (uploadedDemoRows.length) {
         setDemoUploadedRows((prev) => {
           const next = [...uploadedDemoRows, ...prev].slice(0, 25);
@@ -574,7 +622,11 @@ function UploadsPage() {
           ? `${s.imported} data rows imported${workbookRows}`
           : `${s.source_rows} data rows found; ${s.imported} imported${s.skipped ? `, ${s.skipped} skipped` : ""}${s.errors ? `, ${s.errors} errors` : ""}${workbookRows}`;
       toast.success(rowSummary);
+      if (replacedUploads) {
+        toast.success(`Replaced ${replacedUploads} older upload${replacedUploads === 1 ? "" : "s"} for this date range.`);
+      }
       for (const warning of Array.from(new Set(customerSyncWarnings))) toast.warning(warning);
+      for (const warning of Array.from(new Set(replacementWarnings))) toast.warning(warning);
       if (ticketQcWaiting) {
         toast.warning("Upload imported. The KPI will calculate after both required source files exist for this date range.");
       }
