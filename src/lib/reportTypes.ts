@@ -12,7 +12,7 @@ export const REPORT_KINDS: { value: ReportKind; label: string; hint: string }[] 
   {
     value: "active_review_final",
     label: "Active / Review / Final",
-    hint: "File name must include active, review, and final.",
+    hint: "File name must include active, review, and final. No date range is needed.",
   },
   {
     value: "ticket_qc",
@@ -32,7 +32,7 @@ export const REPORT_KINDS: { value: ReportKind; label: string; hint: string }[] 
   {
     value: "open_jobs",
     label: "Open Jobs",
-    hint: "File name must include open jobs.",
+    hint: "File name must include open jobs. No date range is needed.",
   },
 ];
 
@@ -42,6 +42,10 @@ export function reportKindLabel(kind: string | null | undefined) {
 
 export function reportKindHint(kind: ReportKind) {
   return REPORT_KINDS.find((item) => item.value === kind)?.hint ?? "";
+}
+
+export function isSnapshotReportKind(kind: ReportKind | string | null | undefined) {
+  return kind === "active_review_final" || kind === "total_cycle_time" || kind === "open_jobs";
 }
 
 export function identifyReportKindFromFileName(fileName: string): ReportKind | null {

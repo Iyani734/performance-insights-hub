@@ -131,6 +131,8 @@ export function MetricCalculationGuide() {
             The file name determines the calculation. Use names containing active review final,
             TicketQC REVIEW, TicketQC FINAL, Ticket Quality, TCR Total, invoice cycle time,
             total cycle time, or open jobs; the selected report type must match the file name.
+            Active/Review/Final, Invoice Cycle Time, and Open Jobs are current snapshots with no
+            upload date range, so a newer upload replaces the older snapshot.
           </p>
         </div>
       </section>

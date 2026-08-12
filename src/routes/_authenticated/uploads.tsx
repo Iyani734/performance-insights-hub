@@ -55,6 +55,7 @@ import {
   identifyReportKindFromFileName,
   identifyTicketQualitySourceFromFileName,
   identifyTicketQcStageFromFileName,
+  isSnapshotReportKind,
   REPORT_KINDS,
   reportKindHint,
   reportKindLabel,
@@ -284,13 +285,15 @@ function UploadsPage() {
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
   const [uploadStage, setUploadStage] = useState("");
-  const isSnapshotUpload = kind === "active_review_final" || kind === "total_cycle_time";
+  const isSnapshotUpload = isSnapshotReportKind(kind);
   const snapshotUploadLabel =
     kind === "active_review_final"
       ? "Active/Review/Final"
       : kind === "total_cycle_time"
         ? "Invoice Cycle Time"
-        : "snapshot";
+        : kind === "open_jobs"
+          ? "Open Jobs"
+          : "snapshot";
   const uploadBucket = isSnapshotUpload ? defaultRange.to : effectiveFrom;
   const uploadEffectiveFrom = isSnapshotUpload ? defaultRange.to : effectiveFrom;
   const uploadEffectiveTo = isSnapshotUpload ? defaultRange.to : effectiveTo;
@@ -929,7 +932,7 @@ function UploadsPage() {
                 <th className="text-left px-4 py-3 font-medium">When</th>
                 <th className="text-left px-4 py-3 font-medium">Uploaded by</th>
                 <th className="text-left px-4 py-3 font-medium">Type</th>
-                <th className="text-left px-4 py-3 font-medium">Week</th>
+                <th className="text-left px-4 py-3 font-medium">Applies to</th>
                 <th className="text-left px-4 py-3 font-medium">File</th>
                 <th className="text-right px-4 py-3 font-medium">Imported</th>
                 <th className="text-right px-4 py-3 font-medium">Errors</th>
@@ -971,7 +974,9 @@ function UploadsPage() {
                         {reportKindLabel(u.kind)}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 whitespace-nowrap">{formatWeek(u.week_start)}</td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      {isSnapshotReportKind(u.kind) ? "Current snapshot" : formatWeek(u.week_start)}
+                    </td>
                     <td className="px-4 py-2.5 text-muted-foreground max-w-[220px] truncate">
                       {u.file_name}
                     </td>

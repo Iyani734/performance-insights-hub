@@ -6,7 +6,6 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import {
@@ -21,14 +20,13 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { downloadXlsx } from "@/lib/parse";
-import { formatWeek } from "@/lib/kpi";
 import { useAuth } from "@/lib/useAuth";
 import { useDemoMode } from "@/lib/demoMode";
-import { DEMO_WEEKS, demoCustomers, demoEmailJobs, demoOpenJobs } from "@/lib/demoData";
-import { isSeededDemoEmail, isSeededDemoPayload } from "@/lib/liveData";
+import { DEMO_CURRENT_WEEK, demoCustomers, demoEmailJobs, demoOpenJobs } from "@/lib/demoData";
+import { isSeededDemoEmail } from "@/lib/liveData";
 import { sendOpenJobsEmails } from "@/lib/emailSend";
 import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
-import { uniqueOpenJobs } from "@/lib/openJobs";
+import { fetchLatestOpenJobsRows } from "@/lib/openJobsData";
 
 export const Route = createFileRoute("/_authenticated/emails")({ component: EmailsPage });
 
@@ -50,11 +48,11 @@ type SendRequest = {
   message?: string;
 };
 
-const DEFAULT_EMAIL_SUBJECT_TEMPLATE = "Open Jobs Report - {{customer_name}} - Week of {{week}}";
+const DEFAULT_EMAIL_SUBJECT_TEMPLATE = "Open Jobs Report - {{customer_name}}";
 const DEFAULT_EMAIL_MESSAGE_TEMPLATE = [
   "Hi {{customer_name}} team,",
   "",
-  "Please find attached your Open Jobs report for the week of {{week}}.",
+  "Please find attached your current Open Jobs report.",
   "There are {{job_count}} open jobs included.",
 ].join("\n");
 
@@ -62,7 +60,6 @@ function EmailsPage() {
   const qc = useQueryClient();
   const { user } = useAuth();
   const demoMode = useDemoMode();
-  const [week, setWeek] = useState<string | null>(null);
   const [preview, setPreview] = useState<EmailRow | null>(null);
   const [draftSubject, setDraftSubject] = useState("");
   const [draftMessage, setDraftMessage] = useState("");
@@ -70,41 +67,25 @@ function EmailsPage() {
   const [bulkMessage, setBulkMessage] = useState(DEFAULT_EMAIL_MESSAGE_TEMPLATE);
   const [confirmBulkOpen, setConfirmBulkOpen] = useState(false);
 
-  const weeksQ = useQuery({
-    queryKey: ["oj_weeks", demoMode],
-    queryFn: async () => {
-      if (demoMode) return DEMO_WEEKS;
-      const data = await fetchAllSupabaseRows<any>((from, to) =>
-        supabase
-          .from("open_jobs")
-          .select("week_start,details")
-          .order("week_start", { ascending: false })
-          .range(from, to),
-      );
-      return Array.from(
-        new Set(
-          data
-            .filter((row) => !isSeededDemoPayload(row.details))
-            .map((r: any) => r.week_start as string),
-        ),
-      );
-    },
-  });
-
-  const w = week ?? weeksQ.data?.[0] ?? null;
-
   const jobsQ = useQuery({
-    queryKey: ["oj_for_emails", w, demoMode],
+    queryKey: ["oj_current_for_emails", demoMode],
     queryFn: async () => {
-      if (!w) return [];
-      if (demoMode) return demoOpenJobs(w);
-      const data = await fetchAllSupabaseRows<any>((from, to) =>
-        supabase.from("open_jobs").select("*").eq("week_start", w).range(from, to),
-      );
-      return uniqueOpenJobs(data.filter((row) => !isSeededDemoPayload(row.details)));
+      if (demoMode) {
+        return {
+          upload: {
+            file_name: "demo-open-jobs.xlsx",
+            created_at: new Date().toISOString(),
+            week_start: DEMO_CURRENT_WEEK,
+          },
+          rows: demoOpenJobs(DEMO_CURRENT_WEEK),
+        };
+      }
+      return fetchLatestOpenJobsRows();
     },
-    enabled: !!w,
   });
+  const currentOpenJobs = jobsQ.data?.rows ?? [];
+  const currentOpenJobsUpload = jobsQ.data?.upload ?? null;
+  const w = currentOpenJobsUpload?.week_start ?? null;
 
   const custsQ = useQuery({
     queryKey: ["customers", demoMode],
@@ -137,7 +118,7 @@ function EmailsPage() {
 
   const rows = useMemo<EmailRow[]>(() => {
     const byKey = new Map<string, any[]>();
-    for (const job of jobsQ.data ?? []) {
+    for (const job of currentOpenJobs) {
       const arr = byKey.get(job.customer_key) ?? [];
       arr.push(job);
       byKey.set(job.customer_key, arr);
@@ -185,7 +166,7 @@ function EmailsPage() {
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [jobsQ.data, custsQ.data, emailJobsQ.data]);
+  }, [currentOpenJobs, custsQ.data, emailJobsQ.data]);
 
   const sendableRows = rows.filter((row) => row.canSend);
   const sentCount = rows.filter((row) => row.deliveryStatus === "sent").length;
@@ -323,22 +304,18 @@ function EmailsPage() {
         <div>
           <h1 className="font-display text-3xl font-semibold">Customer Emails</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Send per-customer Open Jobs reports and skip customers already sent this week.
+            Send per-customer Open Jobs reports from the current upload and skip customers already sent.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Select value={w ?? ""} onValueChange={setWeek}>
-            <SelectTrigger className="w-[220px]">
-              <SelectValue placeholder="Select week" />
-            </SelectTrigger>
-            <SelectContent>
-              {(weeksQ.data ?? []).map((value) => (
-                <SelectItem key={value} value={value}>
-                  Week of {formatWeek(value)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {currentOpenJobsUpload?.file_name && (
+            <div className="text-right text-xs text-muted-foreground mr-2">
+              <div className="font-medium text-foreground">{currentOpenJobsUpload.file_name}</div>
+              {currentOpenJobsUpload.created_at ? (
+                <div>{new Date(currentOpenJobsUpload.created_at).toLocaleString()}</div>
+              ) : null}
+            </div>
+          )}
           <Button
             variant="outline"
             onClick={() => generateBatch.mutate()}
@@ -368,7 +345,7 @@ function EmailsPage() {
         <div className="px-6 py-4 border-b flex items-center justify-between flex-wrap gap-2">
           <div>
             <h2 className="font-display text-lg font-semibold">
-              Distribute - {w ? formatWeek(w) : "select a week"}
+              Distribute - {currentOpenJobsUpload ? "current Open Jobs upload" : "upload Open Jobs"}
             </h2>
             <p className="text-xs text-muted-foreground">
               {rows.length} customers - {rows.reduce((sum, row) => sum + row.jobs.length, 0)} open jobs
@@ -511,9 +488,9 @@ function EmailsPage() {
           <div className="space-y-2 text-sm text-muted-foreground">
             <p>
               This will send {sendableRows.length} customer email
-              {sendableRows.length === 1 ? "" : "s"} for {w ? formatWeek(w) : "the selected week"}.
+              {sendableRows.length === 1 ? "" : "s"} for the current Open Jobs upload.
             </p>
-            <p>Customers already marked Sent will be skipped automatically.</p>
+            <p>Customers already marked Sent for the current upload period will be skipped automatically.</p>
             <div className="space-y-3 pt-2 text-foreground">
               <div className="space-y-1.5">
                 <Label htmlFor="bulk-subject">Subject</Label>
@@ -638,14 +615,14 @@ function EmailsPage() {
 }
 
 function subjectFor(name: string, week: string) {
-  return `Open Jobs Report - ${name} - Week of ${formatWeek(week)}`;
+  return `Open Jobs Report - ${name}`;
 }
 
 function defaultMessageFor(name: string, week: string, jobCount: number) {
   return [
     `Hi ${name} team,`,
     "",
-    `Please find attached your Open Jobs report for the week of ${formatWeek(week)}.`,
+    "Please find attached your current Open Jobs report.",
     `There are ${jobCount} open jobs included.`,
   ].join("\n");
 }

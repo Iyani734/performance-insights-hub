@@ -211,9 +211,12 @@ function HowItWorks() {
                 <li>
                   <code>Age</code>, <code>Technician</code>, <code>Notes</code>
                 </li>
+                <li>
+                  Open Jobs is a current snapshot: no date range is needed, and each new upload replaces the previous Open Jobs upload.
+                </li>
               </ul>
               <p className="text-xs text-muted-foreground mt-2">
-                Also supports the grouped "Customer: KEY - Name" section layout.
+                Also supports the grouped "Customer: KEY - Name" section layout and displays regardless of the dashboard date range.
               </p>
             </div>
           </div>

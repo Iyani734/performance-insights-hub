@@ -5,6 +5,7 @@ import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
 import {
   identifyTicketQcStageFromFileName,
   identifyTicketQualitySourceFromFileName,
+  isSnapshotReportKind,
 } from "@/lib/reportTypes";
 
 type UploadRow = {
@@ -86,8 +87,7 @@ export const replaceSupersededUploads = createServerFn({ method: "POST" })
   });
 
 function replacementKey(upload: UploadRow) {
-  if (upload.kind === "active_review_final") return "active_review_final|snapshot";
-  if (upload.kind === "total_cycle_time") return "total_cycle_time|snapshot";
+  if (isSnapshotReportKind(upload.kind)) return `${upload.kind}|snapshot`;
 
   return [
     upload.kind ?? "",

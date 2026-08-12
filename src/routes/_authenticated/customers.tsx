@@ -15,10 +15,9 @@ import { canEdit, useAuth } from "@/lib/useAuth";
 import { z } from "zod";
 import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_CURRENT_WEEK, demoCustomers, demoOpenJobs } from "@/lib/demoData";
-import { isSeededDemoEmail, isSeededDemoPayload } from "@/lib/liveData";
-import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
+import { isSeededDemoEmail } from "@/lib/liveData";
 import { deleteCustomer, upsertCustomer } from "@/lib/customersServer";
-import { uniqueOpenJobs } from "@/lib/openJobs";
+import { fetchLatestOpenJobsRows } from "@/lib/openJobsData";
 
 export const Route = createFileRoute("/_authenticated/customers")({ component: CustomersPage });
 
@@ -62,16 +61,9 @@ function CustomersPage() {
     queryKey: ["customers_from_open_jobs", demoMode],
     queryFn: async () => {
       if (demoMode) return [];
-      const data = await fetchAllSupabaseRows<any>((from, to) =>
-        supabase
-          .from("open_jobs")
-          .select("customer_key,customer_name,job_no,details,week_start")
-          .order("week_start", { ascending: false })
-          .range(from, to),
-      );
+      const { rows: data } = await fetchLatestOpenJobsRows();
       const map = new Map<string, any>();
-      for (const row of uniqueOpenJobs(data)) {
-        if (isSeededDemoPayload(row.details)) continue;
+      for (const row of data) {
         const key = String(row.customer_key ?? "").trim();
         const name = String(row.customer_name ?? "").trim();
         if (!key || !name) continue;
@@ -100,24 +92,9 @@ function CustomersPage() {
         for (const r of demoOpenJobs(DEMO_CURRENT_WEEK)) map[r.customer_key] = (map[r.customer_key] ?? 0) + 1;
         return map;
       }
-      const latest = await fetchAllSupabaseRows<any>((from, to) =>
-        supabase
-          .from("open_jobs")
-          .select("week_start,details")
-          .order("week_start", { ascending: false })
-          .range(from, to),
-      );
-      const week = latest.find((row) => !isSeededDemoPayload(row.details))?.week_start;
-      if (!week) return {} as Record<string, number>;
-      const data = await fetchAllSupabaseRows<any>((from, to) =>
-        supabase
-          .from("open_jobs")
-          .select("customer_key,job_no,details")
-          .eq("week_start", week)
-          .range(from, to),
-      );
+      const { rows: data } = await fetchLatestOpenJobsRows();
       const map: Record<string, number> = {};
-      for (const r of uniqueOpenJobs(data.filter((row) => !isSeededDemoPayload(row.details)))) {
+      for (const r of data) {
         map[r.customer_key] = (map[r.customer_key] ?? 0) + 1;
       }
       return map;

@@ -2,6 +2,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
 import { uniqueOpenJobs } from "@/lib/openJobs";
+import { isSeededDemoPayload, isSeededDemoUpload } from "@/lib/liveData";
+import { isOpenJobsUpload } from "@/lib/reportTypes";
 import { z } from "zod";
 
 type OpenJobRow = {
@@ -39,11 +41,11 @@ const sendInputSchema = z.object({
   customMessage: z.string().trim().max(5000).optional(),
 });
 
-const DEFAULT_SUBJECT_TEMPLATE = "Open Jobs Report - {{customer_name}} - Week of {{week}}";
+const DEFAULT_SUBJECT_TEMPLATE = "Open Jobs Report - {{customer_name}}";
 const DEFAULT_MESSAGE_TEMPLATE = [
   "Hi {{customer_name}} team,",
   "",
-  "Please find attached your Open Jobs report for the week of {{week}}.",
+  "Please find attached your current Open Jobs report.",
   "There are {{job_count}} open jobs included.",
 ].join("\n");
 
@@ -59,12 +61,28 @@ export const sendOpenJobsEmails = createServerFn({ method: "POST" })
     if (!resendApiKey) throw new Error("Missing RESEND_API_KEY environment variable.");
     if (!fromEmail) throw new Error("Missing RESEND_FROM_EMAIL environment variable.");
 
+    const uploads = await fetchAllSupabaseRows<any>((from, to) =>
+      supabaseAdmin
+        .from("report_uploads")
+        .select("id,kind,file_name,status,week_start,created_at")
+        .eq("kind", "open_jobs")
+        .order("created_at", { ascending: false })
+        .range(from, to),
+    );
+    const latestUpload =
+      uploads
+        .filter((upload) => !isSeededDemoUpload(upload.file_name))
+        .filter((upload) => upload.status !== "failed" && upload.status !== "processing")
+        .find(isOpenJobsUpload) ?? null;
+    if (!latestUpload) throw new Error("No current Open Jobs upload found.");
+    const currentPeriod = latestUpload.week_start ?? data.weekStart;
+
     const jobsData = await fetchAllSupabaseRows<any>((from, to) =>
-      supabaseAdmin.from("open_jobs").select("*").eq("week_start", data.weekStart).range(from, to),
+      supabaseAdmin.from("open_jobs").select("*").eq("upload_id", latestUpload.id).range(from, to),
     );
 
     const jobsByCustomer = new Map<string, OpenJobRow[]>();
-    for (const job of uniqueOpenJobs(jobsData ?? [])) {
+    for (const job of uniqueOpenJobs((jobsData ?? []).filter((row) => !isSeededDemoPayload(row.details)))) {
       const key = String(job.customer_key ?? "").trim();
       if (!key) continue;
       const rows = jobsByCustomer.get(key) ?? [];
@@ -72,7 +90,7 @@ export const sendOpenJobsEmails = createServerFn({ method: "POST" })
       jobsByCustomer.set(key, rows);
     }
 
-    if (jobsByCustomer.size === 0) throw new Error("No open jobs found for this week.");
+    if (jobsByCustomer.size === 0) throw new Error("No open jobs found for the current upload.");
 
     const customerKeys = Array.from(jobsByCustomer.keys());
     const customersData = await fetchAllSupabaseRows<CustomerRow>((from, to) => {
@@ -98,7 +116,7 @@ export const sendOpenJobsEmails = createServerFn({ method: "POST" })
       supabaseAdmin
         .from("email_jobs")
         .select("customer_id,customer_email,status,sent_at")
-        .eq("week_start", data.weekStart)
+        .eq("week_start", currentPeriod)
         .range(from, to),
     );
 
@@ -134,15 +152,15 @@ export const sendOpenJobsEmails = createServerFn({ method: "POST" })
       const batchId = crypto.randomUUID();
       const templateValues = {
         customerName: customer.name,
-        weekLabel: formatWeekLabel(data.weekStart),
+        weekLabel: formatWeekLabel(currentPeriod),
         jobCount: jobs.length,
       };
       const subject = renderEmailTemplate(data.customSubject || DEFAULT_SUBJECT_TEMPLATE, templateValues);
       const message = renderEmailTemplate(data.customMessage || DEFAULT_MESSAGE_TEMPLATE, templateValues);
-      const attachmentName = attachmentFor(customer.name, data.weekStart);
+      const attachmentName = attachmentFor(customer.name, currentPeriod);
       const logPayload = {
         batch_id: batchId,
-        week_start: data.weekStart,
+        week_start: currentPeriod,
         customer_id: customer.id,
         customer_name: customer.name,
         customer_email: email,

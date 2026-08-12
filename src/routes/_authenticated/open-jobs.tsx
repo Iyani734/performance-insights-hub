@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
 import { useState, useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,13 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Download, Search, Briefcase } from "lucide-react";
 import { downloadXlsx } from "@/lib/parse";
-import { formatWeek } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
 import { useDemoMode } from "@/lib/demoMode";
-import { DEMO_WEEKS, demoOpenJobs } from "@/lib/demoData";
-import { isSeededDemoPayload } from "@/lib/liveData";
-import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
-import { uniqueOpenJobs } from "@/lib/openJobs";
+import { DEMO_CURRENT_WEEK, demoOpenJobs } from "@/lib/demoData";
+import { fetchLatestOpenJobsRows } from "@/lib/openJobsData";
 
 export const Route = createFileRoute("/_authenticated/open-jobs")({ component: OpenJobsPage });
 
@@ -45,40 +41,24 @@ function ageBadge(age: number | null | undefined) {
 
 function OpenJobsPage() {
   const demoMode = useDemoMode();
-  const weeksQ = useQuery({
-    queryKey: ["open_jobs_weeks", demoMode],
-    queryFn: async () => {
-      if (demoMode) return DEMO_WEEKS;
-      const data = await fetchAllSupabaseRows<any>((from, to) =>
-        supabase
-          .from("open_jobs")
-          .select("week_start,details")
-          .order("week_start", { ascending: false })
-          .range(from, to),
-      );
-      return Array.from(new Set(data.filter((row) => !isSeededDemoPayload(row.details)).map((r: any) => r.week_start as string)));
-    },
-  });
-  const [week, setWeek] = useState<string | null>(null);
-  const selectedWeek = week ?? weeksQ.data?.[0] ?? null;
-
   const jobsQ = useQuery({
-    queryKey: ["open_jobs", selectedWeek, demoMode],
+    queryKey: ["open_jobs_current_snapshot", demoMode],
     queryFn: async () => {
-      if (!selectedWeek) return [];
-      if (demoMode) return demoOpenJobs(selectedWeek);
-      const data = await fetchAllSupabaseRows<any>((from, to) =>
-        supabase
-          .from("open_jobs")
-          .select("*")
-          .eq("week_start", selectedWeek)
-          .order("customer_name")
-          .range(from, to),
-      );
-      return uniqueOpenJobs(data.filter((row) => !isSeededDemoPayload(row.details)));
+      if (demoMode) {
+        return {
+          upload: {
+            file_name: "demo-open-jobs.xlsx",
+            created_at: new Date().toISOString(),
+            week_start: DEMO_CURRENT_WEEK,
+          },
+          rows: demoOpenJobs(DEMO_CURRENT_WEEK),
+        };
+      }
+      return fetchLatestOpenJobsRows();
     },
-    enabled: !!selectedWeek,
   });
+  const jobs = jobsQ.data?.rows ?? [];
+  const latestUpload = jobsQ.data?.upload ?? null;
 
   const [selectedCust, setSelectedCust] = useState<string | null>(null);
   const [q, setQ] = useState("");
@@ -88,7 +68,7 @@ function OpenJobsPage() {
 
   const grouped = useMemo(() => {
     const map = new Map<string, { key: string; name: string; jobs: any[] }>();
-    for (const j of jobsQ.data ?? []) {
+    for (const j of jobs) {
       const key = j.customer_key;
       if (!map.has(key)) map.set(key, { key, name: j.customer_name, jobs: [] });
       map.get(key)!.jobs.push(j);
@@ -96,20 +76,20 @@ function OpenJobsPage() {
     let list = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
     if (q) list = list.filter(c => c.name.toLowerCase().includes(q.toLowerCase()));
     return list;
-  }, [jobsQ.data, q]);
+  }, [jobs, q]);
 
   const currentCust = grouped.find(c => c.key === selectedCust) ?? grouped[0];
 
   const statusOptions = useMemo(() => {
     const s = new Set<string>();
-    for (const j of jobsQ.data ?? []) if (j.status) s.add(j.status);
+    for (const j of jobs) if (j.status) s.add(j.status);
     return Array.from(s).sort();
-  }, [jobsQ.data]);
+  }, [jobs]);
   const techOptions = useMemo(() => {
     const s = new Set<string>();
-    for (const j of jobsQ.data ?? []) if (j.technician) s.add(j.technician);
+    for (const j of jobs) if (j.technician) s.add(j.technician);
     return Array.from(s).sort();
-  }, [jobsQ.data]);
+  }, [jobs]);
 
   const filteredJobs = useMemo(() => {
     const jobs = currentCust?.jobs ?? [];
@@ -120,7 +100,7 @@ function OpenJobsPage() {
     );
   }, [currentCust, statusFilter, techFilter, ageFilter]);
 
-  const totalJobs = (jobsQ.data ?? []).length;
+  const totalJobs = jobs.length;
   const detailValue = (job: any, key: string, fallback?: any) => {
     const value = job.details && typeof job.details === "object" ? job.details[key] : null;
     if (value == null || value === "") return fallback ?? null;
@@ -133,15 +113,19 @@ function OpenJobsPage() {
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-3xl font-semibold">Open Jobs</h1>
-          <p className="text-sm text-muted-foreground mt-1">{totalJobs} open jobs across {grouped.length} customers — grouped from the latest upload.</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            {totalJobs} open jobs across {grouped.length} customers - grouped from the current upload.
+          </p>
         </div>
-        <Select value={selectedWeek ?? ""} onValueChange={setWeek}>
-          <SelectTrigger className="w-[220px]"><SelectValue placeholder="Select week" /></SelectTrigger>
-          <SelectContent>{(weeksQ.data ?? []).map(w => <SelectItem key={w} value={w}>Week of {formatWeek(w)}</SelectItem>)}</SelectContent>
-        </Select>
+        {latestUpload?.file_name && (
+          <div className="text-right text-xs text-muted-foreground">
+            <div className="font-medium text-foreground">{latestUpload.file_name}</div>
+            {latestUpload.created_at ? <div>{new Date(latestUpload.created_at).toLocaleString()}</div> : null}
+          </div>
+        )}
       </header>
 
-      {!selectedWeek || (jobsQ.data ?? []).length === 0 ? (
+      {jobs.length === 0 ? (
         <Card className="p-8 text-center border-dashed">
           <Briefcase className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
           <p className="text-sm text-muted-foreground">Upload an Open Jobs report to see customer-grouped jobs here.</p>
