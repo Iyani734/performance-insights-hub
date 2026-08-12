@@ -41,6 +41,12 @@ export function toISODate(v: any): string | null {
   if (!v) return null;
   if (v instanceof Date) return v.toISOString();
   if (typeof v === "number") {
+    const parsed = XLSX.SSF.parse_date_code(v);
+    if (parsed) {
+      const seconds = Math.floor(parsed.S);
+      const milliseconds = Math.round((parsed.S - seconds) * 1000);
+      return new Date(Date.UTC(parsed.y, parsed.m - 1, parsed.d, parsed.H, parsed.M, seconds, milliseconds)).toISOString();
+    }
     const utc = new Date(Math.round((v - 25569) * 86400 * 1000));
     return utc.toISOString();
   }
@@ -75,7 +81,7 @@ function sheetRowCount(sheet: XLSX.WorkSheet): number | undefined {
 
 export async function readWorkbook(file: File): Promise<XLSX.WorkBook> {
   const buf = await file.arrayBuffer();
-  return XLSX.read(buf, { cellDates: true, password: DEFAULT_WORKBOOK_PASSWORD });
+  return XLSX.read(buf, { cellDates: false, password: DEFAULT_WORKBOOK_PASSWORD });
 }
 
 export function parseTicketsSheet(wb: XLSX.WorkBook): { rows: ParsedTicket[]; stats: ParseStats } {
