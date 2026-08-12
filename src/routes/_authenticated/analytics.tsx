@@ -12,7 +12,7 @@ import { DateRangeSelect, type DateRange } from "@/components/DateRangeSelect";
 import { useDemoMode } from "@/lib/demoMode";
 import { addDays, DEMO_TARGETS, DEMO_WEEKS, demoAutoKpisForRange, demoKpiValues } from "@/lib/demoData";
 import { isSeededDemoPayload, isSeededDemoSource, isSeededDemoUpload } from "@/lib/liveData";
-import { deliverPickupDateFromRow, normalizeTicketStatus } from "@/lib/kpiRules";
+import { normalizeTicketStatus } from "@/lib/kpiRules";
 import { isActiveReviewFinalUpload } from "@/lib/reportTypes";
 import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
 
@@ -39,30 +39,25 @@ function statusBg(s: KpiStatus): string {
   return s === "green" ? "bg-success" : s === "yellow" ? "bg-warning" : s === "red" ? "bg-destructive" : "bg-muted";
 }
 
-function buildTicketStatusRows(rows: any[]): TicketStatusRow[] {
-  const byWeek = new Map<string, TicketStatusRow>();
+function buildTicketStatusSnapshot(rows: any[], weekStart: string): TicketStatusRow[] {
+  const snapshot: TicketStatusRow = {
+    week_start: weekStart,
+    active: 0,
+    review: 0,
+    finalEdit: 0,
+    total: 0,
+  };
 
   for (const row of rows) {
-    const deliverPickupDate = deliverPickupDateFromRow(row);
-    const week = deliverPickupDate
-      ? deliverPickupDate.toISOString().slice(0, 10)
-      : String(row.week_start ?? "").slice(0, 10);
-    if (!week) continue;
-
-    if (!byWeek.has(week)) {
-      byWeek.set(week, { week_start: week, active: 0, review: 0, finalEdit: 0, total: 0 });
-    }
-
-    const bucket = byWeek.get(week)!;
-    bucket.total += 1;
+    snapshot.total += 1;
 
     const status = normalizeTicketStatus(row.status);
-    if (status === "active") bucket.active += 1;
-    if (status === "review") bucket.review += 1;
-    if (status === "final edit") bucket.finalEdit += 1;
+    if (status === "active") snapshot.active += 1;
+    if (status === "review") snapshot.review += 1;
+    if (status === "final edit") snapshot.finalEdit += 1;
   }
 
-  return Array.from(byWeek.values()).sort((a, b) => a.week_start.localeCompare(b.week_start));
+  return snapshot.total > 0 ? [snapshot] : [];
 }
 
 function demoTicketStatusRows(): TicketStatusRow[] {
@@ -102,25 +97,26 @@ function AnalyticsPage() {
       if (demoMode) return demoTicketStatusRows();
       const { data: uploads } = await supabase
         .from("report_uploads")
-        .select("id,kind,file_name,status")
+        .select("id,kind,file_name,status,week_start,created_at")
         .order("created_at", { ascending: false })
         .limit(1000);
-      const uploadIds = (uploads ?? [])
+      const latestUpload = (uploads ?? [])
         .filter((upload) => !isSeededDemoUpload(upload.file_name))
         .filter((upload) => upload.status !== "failed" && upload.status !== "processing")
-        .filter(isActiveReviewFinalUpload)
-        .map((upload) => upload.id);
-      if (!uploadIds.length) return [];
+        .find(isActiveReviewFinalUpload);
+      if (!latestUpload) return [];
       const data = await fetchAllSupabaseRows<any>((from, to) =>
         supabase
           .from("tickets")
           .select("week_start,status,raw")
-          .in("upload_id", uploadIds)
+          .eq("upload_id", latestUpload.id)
           .eq("kind", "tickets")
-          .order("week_start")
           .range(from, to),
       );
-      return buildTicketStatusRows(data.filter((row) => !isSeededDemoPayload(row.raw)));
+      return buildTicketStatusSnapshot(
+        data.filter((row) => !isSeededDemoPayload(row.raw)),
+        latestUpload.week_start,
+      );
     },
   });
 
@@ -129,15 +125,12 @@ function AnalyticsPage() {
   const ticketStatusRows = ticketStatusQ.data ?? [];
 
   const weeks = useMemo(() => {
-    const all = Array.from(new Set([
-      ...rows.map(r => r.week_start),
-      ...ticketStatusRows.map(r => r.week_start),
-    ])).sort();
+    const all = Array.from(new Set(rows.map(r => r.week_start))).sort();
     if (range.preset === "all") return all;
     if (range.preset === "custom" && range.from && range.to) return all.filter(w => w >= range.from! && w <= range.to!);
     const n = Number(range.preset);
     return Number.isFinite(n) ? all.slice(-n) : all;
-  }, [rows, ticketStatusRows, range]);
+  }, [rows, range]);
 
   const byKpi = useMemo(() => {
     const m = new Map<string, Map<string, number | null>>();
@@ -150,19 +143,15 @@ function AnalyticsPage() {
   }, [rows, weeks]);
 
   const statusChartData = useMemo(() => {
-    const byWeek = new Map(ticketStatusRows.map((row) => [row.week_start, row]));
-    return weeks
-      .map((week) => {
-        const row = byWeek.get(week);
-        return {
-          week: formatWeek(week).replace(/,.*/, ""),
-          active: row?.active ?? 0,
-          review: row?.review ?? 0,
-          finalEdit: row?.finalEdit ?? 0,
-        };
-      })
+    return ticketStatusRows
+      .map((row) => ({
+        week: "Latest",
+        active: row.active,
+        review: row.review,
+        finalEdit: row.finalEdit,
+      }))
       .filter((row) => row.active > 0 || row.review > 0 || row.finalEdit > 0);
-  }, [ticketStatusRows, weeks]);
+  }, [ticketStatusRows]);
 
   const loading = targetsQ.isLoading || valuesQ.isLoading || ticketStatusQ.isLoading;
   const empty = !loading && rows.length === 0 && ticketStatusRows.length === 0;
@@ -251,9 +240,9 @@ function AnalyticsPage() {
                   <h2 className="font-display text-base font-semibold flex items-center gap-2">
                     <BarChart3 className="w-4 h-4" />Ticket Status Snapshot
                   </h2>
-                  <p className="text-xs text-muted-foreground">Counts from the Active/Review/Final Status column: A = Active, E/R = Review, and F = Final Edit.</p>
+                  <p className="text-xs text-muted-foreground">Latest Active/Review/Final upload: A = Active, E/R = Review, and F = Final Edit.</p>
                 </div>
-                <div className="text-xs text-muted-foreground">Selected date window</div>
+                <div className="text-xs text-muted-foreground">Current snapshot</div>
               </div>
               <ResponsiveContainer width="100%" height={280}>
                 <BarChart data={statusChartData} margin={{ top: 8, right: 8, bottom: 0, left: -10 }}>

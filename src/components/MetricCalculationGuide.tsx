@@ -103,7 +103,7 @@ const METRICS: MetricDefinition[] = [
     formula:
       "Count Status values in column F: A is Active, E or R is Review, and F is Final Edit.",
     columns: ["Column F: Status"],
-    note: "The dashboard and analytics use only the Active/Review/Final source file for these status buckets.",
+    note: "This is a current snapshot. The newest Active/Review/Final upload replaces older snapshots and is not filtered by the selected dashboard date range.",
   },
 ];
 

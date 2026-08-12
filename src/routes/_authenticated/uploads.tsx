@@ -284,7 +284,10 @@ function UploadsPage() {
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
   const [uploadStage, setUploadStage] = useState("");
-  const uploadBucket = effectiveFrom;
+  const isSnapshotUpload = kind === "active_review_final";
+  const uploadBucket = isSnapshotUpload ? defaultRange.to : effectiveFrom;
+  const uploadEffectiveFrom = isSnapshotUpload ? defaultRange.to : effectiveFrom;
+  const uploadEffectiveTo = isSnapshotUpload ? defaultRange.to : effectiveTo;
 
   const uploadsQ = useQuery({
     queryKey: ["uploads"],
@@ -364,8 +367,8 @@ function UploadsPage() {
               id: `demo-local-upload-${Date.now()}-${Math.random().toString(36).slice(2)}`,
               kind,
               week_start: uploadBucket,
-              effective_from: effectiveFrom,
-              effective_to: effectiveTo,
+              effective_from: uploadEffectiveFrom,
+              effective_to: uploadEffectiveTo,
               file_name: selectedFile.name,
               file_path: null,
               row_count: parsed.stats.imported,
@@ -376,7 +379,7 @@ function UploadsPage() {
               processing_ms: dt,
               error_details: parsed.stats.error_details,
               status: parsed.stats.errors > 0 ? "partial" : "success",
-              metrics: buildDemoUploadMetrics(kind, parsed.rows, effectiveFrom, effectiveTo, selectedFile.name),
+              metrics: buildDemoUploadMetrics(kind, parsed.rows, uploadEffectiveFrom, uploadEffectiveTo, selectedFile.name),
             } satisfies DemoUploadRecord,
             customerSyncWarning: null,
             ticketQcWaiting: false,
@@ -418,8 +421,8 @@ function UploadsPage() {
             row_count: 0,
             status: "processing",
             file_path: filePath,
-            effective_from: effectiveFrom,
-            effective_to: effectiveTo,
+            effective_from: uploadEffectiveFrom,
+            effective_to: uploadEffectiveTo,
           } as any)
           .select()
           .single();
@@ -510,7 +513,7 @@ function UploadsPage() {
           if (kind !== "open_jobs") {
             setUploadStage("Calculating dashboard metrics...");
             const { computeAutoKpisForRange } = await import("@/lib/kpi");
-            const auto = await computeAutoKpisForRange(effectiveFrom, effectiveTo);
+            const auto = await computeAutoKpisForRange(uploadEffectiveFrom, uploadEffectiveTo);
             ticketQcWaiting =
               (kind === "ticket_qc" && auto.review_to_final_edit == null) ||
               (kind === "ticket_quality" && auto.ticket_quality == null);
@@ -558,7 +561,11 @@ function UploadsPage() {
       let replacedUploads = 0;
       let replacementWarnings: string[] = [];
       if (!demoMode && completedUploadIds.length) {
-        setUploadStage("Replacing older files for this date range...");
+        setUploadStage(
+          isSnapshotUpload
+            ? "Replacing older Active/Review/Final snapshot..."
+            : "Replacing older files for this date range...",
+        );
         try {
           const replacement = await replaceSupersededUploads({
             data: { uploadIds: completedUploadIds },
@@ -575,7 +582,7 @@ function UploadsPage() {
       if (!demoMode && kind !== "open_jobs") {
         setUploadStage("Refreshing dashboard metrics...");
         const { computeAutoKpisForRange } = await import("@/lib/kpi");
-        const auto = await computeAutoKpisForRange(effectiveFrom, effectiveTo);
+        const auto = await computeAutoKpisForRange(uploadEffectiveFrom, uploadEffectiveTo);
         const upserts = [
           { kpi_key: "review_to_final_edit", actual: auto.review_to_final_edit },
           { kpi_key: "ticket_quality", actual: auto.ticket_quality },
@@ -627,7 +634,11 @@ function UploadsPage() {
           : `${s.source_rows} data rows found; ${s.imported} imported${s.skipped ? `, ${s.skipped} skipped` : ""}${s.errors ? `, ${s.errors} errors` : ""}${workbookRows}`;
       toast.success(rowSummary);
       if (replacedUploads) {
-        toast.success(`Replaced ${replacedUploads} older upload${replacedUploads === 1 ? "" : "s"} for this date range.`);
+        toast.success(
+          isSnapshotUpload
+            ? `Replaced ${replacedUploads} older Active/Review/Final snapshot${replacedUploads === 1 ? "" : "s"}.`
+            : `Replaced ${replacedUploads} older upload${replacedUploads === 1 ? "" : "s"} for this date range.`,
+        );
       }
       for (const warning of Array.from(new Set(customerSyncWarnings))) toast.warning(warning);
       for (const warning of Array.from(new Set(replacementWarnings))) toast.warning(warning);
@@ -729,9 +740,7 @@ function UploadsPage() {
     files.length === 0 ||
     !!fileError ||
     !hasRequiredPairedFiles(files, kind) ||
-    !effectiveFrom ||
-    !effectiveTo ||
-    effectiveFrom > effectiveTo ||
+    (!isSnapshotUpload && (!effectiveFrom || !effectiveTo || effectiveFrom > effectiveTo)) ||
     (!demoMode && !canEdit(auth, "uploads")) ||
     (!demoMode && authLoading);
 
@@ -769,22 +778,26 @@ function UploadsPage() {
             </Select>
             <p className="text-xs text-muted-foreground">{reportKindHint(kind)}</p>
           </div>
-          <div className="space-y-2">
-            <Label>Effective from</Label>
-            <Input
-              type="date"
-              value={effectiveFrom}
-              onChange={(e) => setEffectiveFrom(e.target.value)}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Effective to</Label>
-            <Input
-              type="date"
-              value={effectiveTo}
-              onChange={(e) => setEffectiveTo(e.target.value)}
-            />
-          </div>
+          {!isSnapshotUpload && (
+            <>
+              <div className="space-y-2">
+                <Label>Effective from</Label>
+                <Input
+                  type="date"
+                  value={effectiveFrom}
+                  onChange={(e) => setEffectiveFrom(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Effective to</Label>
+                <Input
+                  type="date"
+                  value={effectiveTo}
+                  onChange={(e) => setEffectiveTo(e.target.value)}
+                />
+              </div>
+            </>
+          )}
           <div className="space-y-2 md:col-span-3">
             <Label>File (.xlsx / .xls)</Label>
             <Input
@@ -799,8 +812,9 @@ function UploadsPage() {
               }}
             />
             <p className="text-xs text-muted-foreground">
-              Pick the date range this file's data covers. The header row is not counted as imported
-              data.
+              {isSnapshotUpload
+                ? "This is a current snapshot. Uploading a new Active/Review/Final file replaces the previous snapshot. The header row is not counted as imported data."
+                : "Pick the date range this file's data covers. The header row is not counted as imported data."}
               {kind === "ticket_qc"
                 ? " Ticket QC can accept TicketQC REVIEW and TicketQC FINAL together, or one at a time."
                 : kind === "ticket_quality"

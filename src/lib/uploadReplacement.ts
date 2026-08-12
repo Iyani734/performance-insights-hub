@@ -86,6 +86,8 @@ export const replaceSupersededUploads = createServerFn({ method: "POST" })
   });
 
 function replacementKey(upload: UploadRow) {
+  if (upload.kind === "active_review_final") return "active_review_final|snapshot";
+
   return [
     upload.kind ?? "",
     effectiveFrom(upload),

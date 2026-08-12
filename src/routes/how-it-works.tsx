@@ -99,7 +99,7 @@ const METRICS: MetricSpec[] = [
     formula:
       "count Status values in column F: A is Active, E or R is Review, and F is Final Edit",
     columns: ["Column F: Status"],
-    why: "This gives the dashboard and analytics snapshot directly from the Active/Review/Final source file.",
+    why: "This is a current snapshot. Uploading a new Active/Review/Final file replaces the older snapshot and the dashboard shows the new counts without using the selected date range.",
   },
 ];
 
@@ -140,8 +140,8 @@ function HowItWorks() {
             <Calculator className="w-5 h-5 text-primary mb-2" />
             <div className="font-medium">2. Automatic KPIs run</div>
             <p className="text-sm text-muted-foreground mt-1">
-              The dashboard uses the selected From and To dates to choose matching uploads. Total
-              Cycle Time then counts business days through today.
+              Date-based KPIs use the selected From and To dates. Active/Review/Final is a current
+              snapshot, so the newest upload becomes the displayed status count.
             </p>
           </Card>
           <Card className="p-5">

@@ -3,7 +3,6 @@ import { isSeededDemoPayload, isSeededDemoUpload } from "@/lib/liveData";
 import {
   calculateInvoiceCycleTime,
   calculateTotalCycleTime,
-  deliverPickupDateFromRow,
   hasValue,
   normalizeTicketStatus,
 } from "@/lib/kpiRules";
@@ -115,7 +114,8 @@ export async function computeAutoKpis(week: string) {
 
 export async function computeAutoKpisForRange(from: string, to: string) {
   const uploads = await fetchUploadsForRange(from, to);
-  const activeUploads = uploads.filter(isActiveReviewFinalUpload);
+  const activeUpload = await fetchLatestActiveReviewFinalUpload();
+  const activeUploads = activeUpload ? [activeUpload] : [];
   const qcUploads = uploads.filter(isTicketQcUpload);
   const qualityUploads = uploads.filter(isTicketQualityUpload);
   const cycleUploads = uploads.filter(isTotalCycleTimeUpload);
@@ -131,7 +131,6 @@ export async function computeAutoKpisForRange(from: string, to: string) {
   ]);
 
   const statusMatches = (status: unknown, value: string) => normalizeTicketStatus(status) === value;
-  const ticketsInDateRange = tickets.filter((row: any) => isTicketInDateRange(row, from, to));
   const ticketQc = calculateTicketQcReviewToFinal(qcUploads);
   const ticketQuality = calculateTicketQualityFromUploads(qualityUploads, qualityErrorRows.length);
   const totalCycleTime = calculateInvoiceCycleTime(cycleRows, to) ?? calculateTotalCycleTime(cycleRows, new Date(`${to}T00:00:00Z`));
@@ -142,7 +141,7 @@ export async function computeAutoKpisForRange(from: string, to: string) {
     invoice_cycle_time: totalCycleTime,
     dispatch_completion: null,
     totals: {
-      tickets: ticketsInDateRange.length,
+      tickets: tickets.length,
       invoiced: cycleRows.length,
       quality_issues: ticketQuality.errorRows,
       quality_total_tickets: ticketQuality.totalRows,
@@ -150,10 +149,10 @@ export async function computeAutoKpisForRange(from: string, to: string) {
       qc_review_tickets: ticketQc.reviewRows,
       qc_final_tickets: ticketQc.finalRows,
       cycle_time_rows: cycleRows.length,
-      voided: ticketsInDateRange.filter((r: any) => hasValue(r.void_reason)).length,
-      active_tickets: ticketsInDateRange.filter((r: any) => statusMatches(r.status, "active")).length,
-      review_tickets: ticketsInDateRange.filter((r: any) => statusMatches(r.status, "review")).length,
-      final_edit_tickets: ticketsInDateRange.filter((r: any) => statusMatches(r.status, "final edit")).length,
+      voided: tickets.filter((r: any) => hasValue(r.void_reason)).length,
+      active_tickets: tickets.filter((r: any) => statusMatches(r.status, "active")).length,
+      review_tickets: tickets.filter((r: any) => statusMatches(r.status, "review")).length,
+      final_edit_tickets: tickets.filter((r: any) => statusMatches(r.status, "final edit")).length,
     },
   };
 }
@@ -186,6 +185,23 @@ async function fetchUploadsForRange(from: string, to: string): Promise<UploadLik
     const uploadTo = upload.effective_to ?? addDaysUtc(upload.week_start, 6);
     return uploadFrom <= to && uploadTo >= from;
   });
+}
+
+async function fetchLatestActiveReviewFinalUpload(): Promise<UploadLike | null> {
+  const data = await fetchAllSupabaseRows<UploadLike>((rangeFrom, rangeTo) =>
+    supabase
+      .from("report_uploads")
+      .select("id,kind,file_name,row_count,week_start,effective_from,effective_to,status,created_at")
+      .order("created_at", { ascending: false })
+      .range(rangeFrom, rangeTo),
+  );
+
+  return latestUpload(
+    data
+      .filter((upload) => !isSeededDemoUpload(upload.file_name))
+      .filter((upload) => upload.status !== "failed" && upload.status !== "processing")
+      .filter(isActiveReviewFinalUpload),
+  );
 }
 
 async function fetchTicketRowsByUploadIds(uploadIds: string[], kind: "tickets" | "invoiced") {
@@ -256,11 +272,4 @@ function latestUpload(uploads: UploadLike[]) {
 function uploadTimestamp(upload: UploadLike) {
   const value = Date.parse(upload.created_at ?? "");
   return Number.isFinite(value) ? value : 0;
-}
-
-function isTicketInDateRange(row: any, from: string, to: string) {
-  const deliverPickup = deliverPickupDateFromRow(row);
-  if (!deliverPickup) return true;
-  const iso = deliverPickup.toISOString().slice(0, 10);
-  return iso >= from && iso <= to;
 }
