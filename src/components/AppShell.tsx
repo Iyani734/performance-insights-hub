@@ -6,7 +6,6 @@ import {
   Users,
   Mail,
   Briefcase,
-  History,
   Settings,
   LogOut,
   Activity,
@@ -41,7 +40,6 @@ const NAV: NavItem[] = [
   { to: "/open-jobs",  key: "open-jobs",  label: "Open Jobs", icon: Briefcase },
   { to: "/customers",  key: "customers",  label: "Customers", icon: Users },
   { to: "/emails",     key: "emails",     label: "Emails",    icon: Mail },
-  { to: "/history",    key: "history",    label: "History",   icon: History },
   { to: "/settings",   key: "settings",   label: "Settings",  icon: Settings },
 ];
 
@@ -189,7 +187,7 @@ function SidebarInner({
 
         {!collapsed ? (
           <div className="border-t border-sidebar-border/70 pt-3 text-[11px] leading-snug text-sidebar-foreground/55">
-            Service provided by{" "}
+            Data Analytics provided by{" "}
             <a
               href="https://triaconsultingus.com/"
               target="_blank"
@@ -204,7 +202,7 @@ function SidebarInner({
             href="https://triaconsultingus.com/"
             target="_blank"
             rel="noreferrer"
-            title="Service provided by TRIA"
+            title="Data Analytics provided by TRIA"
             className="block rounded-md border-t border-sidebar-border/70 pt-3 text-center text-[10px] font-semibold tracking-wide text-sidebar-foreground/60 hover:text-sidebar-foreground"
           >
             TRIA
@@ -229,11 +227,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const content = hasAnyPageAccess ? children : <PendingApproval />;
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen overflow-x-hidden">
       {/* Desktop sidebar */}
       <aside
         className={cn(
-          "hidden md:flex sticky top-0 h-screen border-r border-sidebar-border transition-[width] duration-200",
+          "fixed inset-y-0 left-0 z-30 hidden h-screen border-r border-sidebar-border bg-sidebar transition-[width] duration-200 md:flex",
           collapsed ? "w-16" : "w-64"
         )}
       >
@@ -253,7 +251,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <main className="flex-1 min-w-0">
+      <main
+        className={cn(
+          "min-w-0 flex-1 overflow-x-hidden transition-[padding-left] duration-200",
+          collapsed ? "md:pl-16" : "md:pl-64"
+        )}
+      >
         {/* Mobile top bar */}
         <div className="md:hidden sticky top-0 z-20 flex items-center gap-2 border-b bg-background/80 backdrop-blur px-4 py-3">
           <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
@@ -275,7 +278,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        <div className="max-w-[1400px] mx-auto p-4 md:p-8">{content}</div>
+        <div className="mx-auto w-full max-w-[1400px] min-w-0 p-4 md:p-8">{content}</div>
       </main>
     </div>
   );
@@ -288,7 +291,7 @@ function PendingApproval() {
         <ShieldCheck className="mx-auto mb-4 h-10 w-10 text-primary" />
         <h1 className="font-display text-2xl font-semibold">Account awaiting approval</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Your account is active, but company access has not been enabled yet. A super admin needs to grant page access before metrics, uploads, customers, emails, or history are visible.
+          Your account is active, but company access has not been enabled yet. A super admin needs to grant page access before metrics, uploads, customers, or emails are visible.
         </p>
       </div>
     </div>

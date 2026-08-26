@@ -1,9 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
+import * as XLSX from "xlsx";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
-import { uniqueOpenJobs } from "@/lib/openJobs";
+import { openJobCustomerKey, openJobDetailValue, openJobReportRow, sortOpenJobsBySourceOrder, uniqueOpenJobs } from "@/lib/openJobs";
 import { isSeededDemoPayload, isSeededDemoUpload } from "@/lib/liveData";
 import { isOpenJobsUpload } from "@/lib/reportTypes";
+import { formatDateOnly } from "@/lib/dateLabels";
 import { z } from "zod";
 
 type OpenJobRow = {
@@ -41,7 +43,7 @@ const sendInputSchema = z.object({
   customMessage: z.string().trim().max(5000).optional(),
 });
 
-const DEFAULT_SUBJECT_TEMPLATE = "Open Jobs Report - {{customer_name}}";
+const DEFAULT_SUBJECT_TEMPLATE = "Open Jobs Report - {{customer_name}} - Week of {{week}}";
 const DEFAULT_MESSAGE_TEMPLATE = [
   "Hi {{customer_name}} team,",
   "",
@@ -82,8 +84,8 @@ export const sendOpenJobsEmails = createServerFn({ method: "POST" })
     );
 
     const jobsByCustomer = new Map<string, OpenJobRow[]>();
-    for (const job of uniqueOpenJobs((jobsData ?? []).filter((row) => !isSeededDemoPayload(row.details)))) {
-      const key = String(job.customer_key ?? "").trim();
+    for (const job of sortOpenJobsBySourceOrder(uniqueOpenJobs((jobsData ?? []).filter((row) => !isSeededDemoPayload(row.details))))) {
+      const key = openJobCustomerKey(job);
       if (!key) continue;
       const rows = jobsByCustomer.get(key) ?? [];
       rows.push(job);
@@ -112,27 +114,6 @@ export const sendOpenJobsEmails = createServerFn({ method: "POST" })
     );
     if (customers.length === 0) throw new Error("No enabled customers with email addresses found.");
 
-    const sentRows = await fetchAllSupabaseRows<any>((from, to) =>
-      supabaseAdmin
-        .from("email_jobs")
-        .select("customer_id,customer_email,status,sent_at")
-        .eq("week_start", currentPeriod)
-        .range(from, to),
-    );
-
-    const sentCustomerIds = new Set(
-      (sentRows ?? [])
-        .filter(isSentEmailLog)
-        .map((row) => row.customer_id)
-        .filter((id): id is string => !!id),
-    );
-    const sentEmails = new Set(
-      (sentRows ?? [])
-        .filter(isSentEmailLog)
-        .map((row) => String(row.customer_email ?? "").trim().toLowerCase())
-        .filter(Boolean),
-    );
-
     const result: SendResult = { sent: 0, skipped: 0, failed: 0, details: [] };
 
     for (const customer of customers) {
@@ -143,12 +124,6 @@ export const sendOpenJobsEmails = createServerFn({ method: "POST" })
         result.details.push({ customer: customer.name, status: "skipped", reason: "No jobs or email" });
         continue;
       }
-      if (sentCustomerIds.has(customer.id) || sentEmails.has(email.toLowerCase())) {
-        result.skipped++;
-        result.details.push({ customer: customer.name, status: "skipped", reason: "Already sent" });
-        continue;
-      }
-
       const batchId = crypto.randomUUID();
       const templateValues = {
         customerName: customer.name,
@@ -199,7 +174,7 @@ export const sendOpenJobsEmails = createServerFn({ method: "POST" })
           html: emailHtml(message, jobs),
           text: emailText(message),
           attachmentName,
-          attachmentContent: csvBase64(jobs),
+          attachmentContent: xlsxBase64(jobs),
         });
         const now = new Date().toISOString();
         const { error: updateError } = await supabaseAdmin
@@ -225,8 +200,6 @@ export const sendOpenJobsEmails = createServerFn({ method: "POST" })
           .update({ last_email_sent_at: now, updated_at: now })
           .eq("id", customer.id);
 
-        sentCustomerIds.add(customer.id);
-        sentEmails.add(email.toLowerCase());
         result.sent++;
         result.details.push({ customer: customer.name, status: "sent" });
       } catch (error: any) {
@@ -248,7 +221,7 @@ export const sendOpenJobsEmails = createServerFn({ method: "POST" })
   });
 
 function attachmentFor(name: string, week: string) {
-  return `${name.replace(/[^A-Za-z0-9]+/g, "_")}-open-jobs-${week}.csv`;
+  return `${name.replace(/[^A-Za-z0-9]+/g, "_")}-open-jobs-${week}.xlsx`;
 }
 
 async function sendWithResend(input: {
@@ -301,11 +274,14 @@ function emailHtml(message: string, jobs: OpenJobRow[]) {
     .map(
       (job) => `
         <tr>
-          <td>${escapeHtml(job.job_no ?? job.ticket_no ?? "")}</td>
-          <td>${escapeHtml(job.address ?? "")}</td>
-          <td>${escapeHtml(job.status ?? "")}</td>
-          <td>${escapeHtml(job.age_days ?? "")}</td>
-          <td>${escapeHtml(job.technician ?? "")}</td>
+          <td style="border-bottom: 1px solid #eef1f6; padding: 6px; vertical-align: top;">${escapeHtml(openJobDetailValue(job, "job_id_job_ref", job.job_no) ?? "")}</td>
+          <td style="border-bottom: 1px solid #eef1f6; padding: 6px; vertical-align: top;">${escapeHtml(openJobDetailValue(job, "purchase_order_customer_job_lines", openJobDetailValue(job, "purchase_order_customer_job", job.ticket_no)) ?? "")}</td>
+          <td style="border-bottom: 1px solid #eef1f6; padding: 6px; vertical-align: top;">${escapeHtml(openJobDetailValue(job, "srv_int", job.order_type) ?? "")}</td>
+          <td style="border-bottom: 1px solid #eef1f6; padding: 6px; vertical-align: top;">${escapeHtml(openJobDetailValue(job, "zone", job.status) ?? "")}</td>
+          <td style="border-bottom: 1px solid #eef1f6; padding: 6px; vertical-align: top;">${escapeHtml(openJobDetailValue(job, "opened_first_ticket_lines", openJobDetailValue(job, "opened_first_ticket")) ?? "")}</td>
+          <td style="border-bottom: 1px solid #eef1f6; padding: 6px; vertical-align: top;">${escapeHtml(openJobDetailValue(job, "last_ticket", job.last_activity) ?? "")}</td>
+          <td style="border-bottom: 1px solid #eef1f6; padding: 6px; vertical-align: top;">${escapeHtml(openJobDetailValue(job, "job_address_city_lines", openJobDetailValue(job, "job_address_city", job.address)) ?? "")}</td>
+          <td style="border-bottom: 1px solid #eef1f6; padding: 6px; vertical-align: top;">${escapeHtml(openJobDetailValue(job, "foreman", job.technician) ?? "")}</td>
         </tr>`,
     )
     .join("");
@@ -313,19 +289,22 @@ function emailHtml(message: string, jobs: OpenJobRow[]) {
   return `
     <div style="font-family: Arial, sans-serif; color: #172033; line-height: 1.5;">
       ${messageToHtml(message)}
-      <table style="border-collapse: collapse; width: 100%; font-size: 13px;">
+      <table style="border-collapse: collapse; width: 100%; font-size: 12px;">
         <thead>
           <tr>
-            <th align="left" style="border-bottom: 1px solid #d9dee8; padding: 6px;">Job</th>
-            <th align="left" style="border-bottom: 1px solid #d9dee8; padding: 6px;">Address</th>
-            <th align="left" style="border-bottom: 1px solid #d9dee8; padding: 6px;">Status</th>
-            <th align="left" style="border-bottom: 1px solid #d9dee8; padding: 6px;">Age</th>
-            <th align="left" style="border-bottom: 1px solid #d9dee8; padding: 6px;">Technician</th>
+            <th align="left" style="border-bottom: 1px solid #d9dee8; padding: 6px;">Job ID / Job Ref.</th>
+            <th align="left" style="border-bottom: 1px solid #d9dee8; padding: 6px;">Purchase Order # / Customer Job#</th>
+            <th align="left" style="border-bottom: 1px solid #d9dee8; padding: 6px;">Srv Int</th>
+            <th align="left" style="border-bottom: 1px solid #d9dee8; padding: 6px;">Zone</th>
+            <th align="left" style="border-bottom: 1px solid #d9dee8; padding: 6px;">Opened / First Ticket</th>
+            <th align="left" style="border-bottom: 1px solid #d9dee8; padding: 6px;">Last Ticket</th>
+            <th align="left" style="border-bottom: 1px solid #d9dee8; padding: 6px;">Job Address/City</th>
+            <th align="left" style="border-bottom: 1px solid #d9dee8; padding: 6px;">Foreman</th>
           </tr>
         </thead>
         <tbody>${previewRows}</tbody>
       </table>
-      ${jobs.length > 50 ? `<p>Showing first 50 rows here. The CSV attachment contains all ${jobs.length} jobs.</p>` : ""}
+      ${jobs.length > 50 ? `<p>Showing first 50 rows here. The Excel attachment contains all ${jobs.length} jobs.</p>` : ""}
     </div>`;
 }
 
@@ -333,29 +312,29 @@ function emailText(message: string) {
   return message;
 }
 
-function csvBase64(jobs: OpenJobRow[]) {
-  const header = ["Job", "Ticket", "Address", "Status", "Age", "Technician", "Order Type", "Notes"];
-  const rows = jobs.map((job) => [
-    job.job_no ?? "",
-    job.ticket_no ?? "",
-    job.address ?? "",
-    job.status ?? "",
-    job.age_days ?? "",
-    job.technician ?? "",
-    job.order_type ?? "",
-    job.notes ?? job.last_activity ?? "",
-  ]);
-  const csv = [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
-  return base64Utf8(csv);
+function xlsxBase64(jobs: OpenJobRow[]) {
+  const header = [
+    "Job ID / Job Ref.",
+    "Purchase Order # / Customer Job#",
+    "Srv Int",
+    "Zone",
+    "Opened / First Ticket",
+    "Last Ticket",
+    "Job Address/City",
+    "Foreman",
+  ];
+  const rows = jobs.map((job) => {
+    const reportRow = openJobReportRow(job);
+    return header.map((column) => reportRow[column] ?? "");
+  });
+  const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Open Jobs");
+  const bytes = XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+  return base64Bytes(new Uint8Array(bytes));
 }
 
-function csvCell(value: unknown) {
-  const text = String(value ?? "");
-  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
-
-function base64Utf8(text: string) {
-  const bytes = new TextEncoder().encode(text);
+function base64Bytes(bytes: Uint8Array) {
   let binary = "";
   const chunkSize = 0x8000;
   for (let i = 0; i < bytes.length; i += chunkSize) {
@@ -365,11 +344,7 @@ function base64Utf8(text: string) {
 }
 
 function formatWeekLabel(iso: string) {
-  return new Date(`${iso}T00:00:00Z`).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  return formatDateOnly(iso);
 }
 
 function renderEmailTemplate(
@@ -390,9 +365,6 @@ function messageToHtml(message: string) {
     .join("\n");
 }
 
-function isSentEmailLog(row: { status?: string | null; sent_at?: string | null }) {
-  return row.status === "sent" || !!row.sent_at;
-}
 
 function escapeHtml(value: unknown) {
   return String(value ?? "")

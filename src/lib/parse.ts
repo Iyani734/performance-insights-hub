@@ -293,6 +293,21 @@ export type ParsedOpenJob = {
   details: Record<string, any>;
 };
 
+const UNKNOWN_OPEN_JOB_CUSTOMER_KEY = "UNKNOWN";
+const UNKNOWN_OPEN_JOB_CUSTOMER_NAME = "Unknown";
+
+function cleanOpenJobsCustomerName(value: string | undefined) {
+  if (!value || /^unknown(?:\s+customer)?$/i.test(value)) return UNKNOWN_OPEN_JOB_CUSTOMER_NAME;
+  return value;
+}
+
+function cleanOpenJobsCustomerKey(value: string | undefined, name: string) {
+  const key = value?.trim();
+  if (key) return key;
+  if (name === UNKNOWN_OPEN_JOB_CUSTOMER_NAME) return UNKNOWN_OPEN_JOB_CUSTOMER_KEY;
+  return name.toUpperCase().replace(/\W+/g, "").slice(0, 20) || UNKNOWN_OPEN_JOB_CUSTOMER_KEY;
+}
+
 // Handles both grouped ("Customer: KEY - Name" section headers) and flat tables.
 export function parseOpenJobsSheet(wb: XLSX.WorkBook): { rows: ParsedOpenJob[]; stats: ParseStats } {
   const sheet = wb.Sheets[wb.SheetNames[0]];
@@ -309,12 +324,11 @@ export function parseOpenJobsSheet(wb: XLSX.WorkBook): { rows: ParsedOpenJob[]; 
     const rows: ParsedOpenJob[] = [];
     keyed.forEach((r, i) => {
       try {
-        const name = s(r["Customer"]) ?? s(r["Customer Name"]) ?? s(r["Company"]);
-        if (!name) { stats.skipped++; return; }
-        const key = s(r["Customer ID"]) ?? s(r["Customer Key"]) ?? name.toUpperCase().replace(/\W+/g, "").slice(0, 20);
+        const name = cleanOpenJobsCustomerName(s(r["Customer"]) ?? s(r["Customer Name"]) ?? s(r["Company"]));
+        const key = cleanOpenJobsCustomerKey(s(r["Customer ID"]) ?? s(r["Customer Key"]), name);
         const last = s(r["Last Activity"]) ?? s(r["LastActivity"]);
         rows.push({
-          customer_key: key!,
+          customer_key: key,
           customer_name: name,
           job_no: s(r["Job #"]) ?? s(r["Job"]),
           ticket_no: s(r["Ticket #"]) ?? s(r["Ticket"]),
@@ -325,7 +339,7 @@ export function parseOpenJobsSheet(wb: XLSX.WorkBook): { rows: ParsedOpenJob[]; 
           technician: s(r["Technician"]) ?? s(r["Driver"]) ?? s(r["Assigned To"]) ?? s(r["Assigned"]),
           notes: s(r["Notes"]) ?? s(r["Comments"]) ?? s(r["Remarks"]),
           last_activity: last,
-          details: r,
+          details: { ...r, excel_row: i + 2 },
         });
         stats.imported++;
       } catch (e: any) {
@@ -338,16 +352,19 @@ export function parseOpenJobsSheet(wb: XLSX.WorkBook): { rows: ParsedOpenJob[]; 
 
   // Fallback: the grouped section-header layout used by the Current Open Jobs List.
   const arrRows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1, defval: null });
+  const displayRows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1, defval: null, raw: false });
   const rows: ParsedOpenJob[] = [];
-  let currentKey = "UNKNOWN";
-  let currentName = "Unknown Customer";
+  let currentKey = UNKNOWN_OPEN_JOB_CUSTOMER_KEY;
+  let currentName = UNKNOWN_OPEN_JOB_CUSTOMER_NAME;
   let currentDeclaredJobCount: number | undefined;
   let currentImportedJobCount = 0;
   let currentJob: ParsedOpenJob | null = null;
 
   arrRows.forEach((row, i) => {
     if (!row || row.every((c) => c == null || String(c).trim() === "")) return;
-    const first = row[0] ? String(row[0]).trim() : "";
+    const displayRow = displayRows[i] ?? row;
+    const cells = displayRow.map((c) => (c == null ? "" : String(c).trim()));
+    const first = cells[0] ?? "";
     const customerHeader = parseGroupedCustomerHeader(first);
     if (customerHeader) {
       currentKey = customerHeader.key;
@@ -359,8 +376,7 @@ export function parseOpenJobsSheet(wb: XLSX.WorkBook): { rows: ParsedOpenJob[]; 
     }
     if (/^Current Open Jobs List$/i.test(first)) return;
     if (/^Job ID|^Job #|^Ticket|^-{3,}/i.test(first)) return;
-    if (/Most Recent Activity/i.test(row.map((cell) => String(cell ?? "")).join(" "))) return;
-    const cells = row.map((c) => (c == null ? "" : String(c).trim()));
+    if (/Most Recent Activity/i.test(cells.join(" "))) return;
     if (cells.every(c => c === "")) return;
 
     if (!cells[0]) {
@@ -400,8 +416,8 @@ export function parseOpenJobsSheet(wb: XLSX.WorkBook): { rows: ParsedOpenJob[]; 
           purchase_order_customer_job: cells[1] || null,
           srv_int: cells[2] || null,
           zone: cells[3] || null,
-          opened_first_ticket: toISODate(row[4])?.slice(0, 10) ?? (cells[4] || null),
-          last_ticket: toISODate(row[5])?.slice(0, 10) ?? (cells[5] || null),
+          opened_first_ticket: cells[4] || null,
+          last_ticket: cells[5] || null,
           job_address_city: cells[6] || null,
           foreman: cells[7] || null,
           continuation_rows: [],
@@ -428,9 +444,9 @@ function parseGroupedCustomerHeader(value: string) {
   if (splitAt < 0) return null;
 
   const key = body.slice(0, splitAt).trim();
-  const name = body.slice(splitAt).replace(/^\s*-\s*/, "").trim();
-  if (!key || !name) return null;
-  return { key, name };
+  const name = cleanOpenJobsCustomerName(body.slice(splitAt).replace(/^\s*-\s*/, "").trim() || undefined);
+  if (!key) return null;
+  return { key: cleanOpenJobsCustomerKey(key, name), name };
 }
 
 function jobCountFromRow(row: any[]) {
@@ -450,8 +466,8 @@ function mergeOpenJobContinuation(job: ParsedOpenJob, cells: string[], rowNumber
   const continuation = {
     excel_row: rowNumber,
     purchase_order_customer_job: cells[1] || null,
-    opened_first_ticket: toISODate(cells[4])?.slice(0, 10) ?? (cells[4] || null),
-    last_ticket: toISODate(cells[5])?.slice(0, 10) ?? (cells[5] || null),
+    opened_first_ticket: cells[4] || null,
+    last_ticket: cells[5] || null,
     job_address_city: cells[6] || null,
     foreman: cells[7] || null,
   };
@@ -467,7 +483,7 @@ function mergeOpenJobContinuation(job: ParsedOpenJob, cells: string[], rowNumber
   if (cells[4]) {
     details.opened_first_ticket_lines = [
       ...((details.opened_first_ticket_lines as string[]) ?? [String(details.opened_first_ticket ?? "")].filter(Boolean)),
-      toISODate(cells[4])?.slice(0, 10) ?? cells[4],
+      cells[4],
     ];
   }
   if (cells[6]) {

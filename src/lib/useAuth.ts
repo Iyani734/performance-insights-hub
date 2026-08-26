@@ -18,7 +18,8 @@ export type AuthState = {
 
 // Default permissions when no explicit row exists: no access until a super admin approves the user.
 export const DEFAULT_PAGES = [
-  "dashboard", "analytics", "uploads", "open-jobs", "customers", "emails", "history", "support", "settings",
+  "dashboard", "analytics", "uploads", "open-jobs", "customers", "emails", "support", "settings",
+  // "history" is intentionally omitted while the legacy History page is retired.
 ];
 
 export function canView(state: AuthState, page: string): boolean {

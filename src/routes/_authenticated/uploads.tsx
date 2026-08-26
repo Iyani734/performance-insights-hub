@@ -62,7 +62,6 @@ import {
   type ReportKind,
 } from "@/lib/reportTypes";
 import {
-  defaultLast7DaysRange,
   demoUploads,
   loadDemoLocalUploads,
   saveDemoLocalUploads,
@@ -71,12 +70,15 @@ import {
 } from "@/lib/demoData";
 import { replaceSupersededUploads } from "@/lib/uploadReplacement";
 import { syncOpenJobCustomers } from "@/lib/customersServer";
+import { formatWorkingWeekRange, workingWeekRangeForDate } from "@/lib/workingWeeks";
+import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
 
 export const Route = createFileRoute("/_authenticated/uploads")({ component: UploadsPage });
 
 const KINDS = REPORT_KINDS;
 const DEMO_UPLOADERS = ["Ian", "Yvette"];
 const INSERT_CONCURRENCY = 3;
+type UploadTiming = "timeless" | "range";
 
 function isExcelFile(file: File) {
   return /\.(xlsx|xls)$/i.test(file.name);
@@ -117,14 +119,14 @@ function missingPairedFileMessage(files: File[], kind: ReportKind) {
       !selected.has("review") ? "TicketQC REVIEW" : null,
       !selected.has("final") ? "TicketQC FINAL" : null,
     ].filter(Boolean);
-    return `Add ${missing.join(" and ")} before uploading.`;
+    return `You can upload this now. Add ${missing.join(" and ")} later before the KPI calculates.`;
   }
 
   const missing = [
     !selected.has("errors") ? "Ticket Quality Error" : null,
     !selected.has("total") ? "TCR Total" : null,
   ].filter(Boolean);
-  return `Add ${missing.join(" and ")} before uploading.`;
+  return `You can upload this now. Add ${missing.join(" and ")} later before the KPI calculates.`;
 }
 
 function fileIdentity(file: File) {
@@ -186,13 +188,6 @@ function validateUploadSelection(files: File[], kind: ReportKind) {
     }
   }
 
-  if (kind === "ticket_qc" && !hasRequiredPairedFiles(files, kind)) {
-    throw new Error("Ticket QC requires two files: TicketQC REVIEW and TicketQC FINAL.");
-  }
-
-  if (kind === "ticket_quality" && !hasRequiredPairedFiles(files, kind)) {
-    throw new Error("Ticket Quality requires two files: Ticket Quality Error and TCR Total.");
-  }
 }
 
 function mergeStats(stats: ParseStats[]): ParseStats {
@@ -268,16 +263,25 @@ function buildDemoUploadMetrics(
   };
 }
 
+function uploadAppliesTo(upload: any) {
+  const from = upload.effective_from ?? upload.week_start;
+  const to = upload.effective_to ?? upload.week_start;
+  if (!from) return "Unknown";
+  if (!to || to === from) return formatWeek(from);
+  return `${formatWeek(from)} - ${formatWeek(to)}`;
+}
+
 function UploadsPage() {
   const qc = useQueryClient();
   const auth = useAuth();
   const { user, isSuperAdmin, loading: authLoading } = auth;
   const demoMode = useDemoMode();
   const canDeleteUploads = isSuperAdmin || canEdit(auth, "uploads");
-  const defaultRange = defaultLast7DaysRange();
+  const currentWorkingRange = workingWeekRangeForDate();
   const [kind, setKind] = useState<ReportKind>("active_review_final");
-  const [effectiveFrom, setEffectiveFrom] = useState<string>(defaultRange.from);
-  const [effectiveTo, setEffectiveTo] = useState<string>(defaultRange.to);
+  const [uploadTiming, setUploadTiming] = useState<UploadTiming>("timeless");
+  const [effectiveFrom, setEffectiveFrom] = useState<string>(currentWorkingRange.from);
+  const [effectiveTo, setEffectiveTo] = useState<string>(currentWorkingRange.to);
   const [files, setFiles] = useState<File[]>([]);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [demoUploadedRows, setDemoUploadedRows] =
@@ -286,6 +290,8 @@ function UploadsPage() {
   const [deleteReason, setDeleteReason] = useState("");
   const [uploadStage, setUploadStage] = useState("");
   const isSnapshotUpload = isSnapshotReportKind(kind);
+  const isAlwaysTimelessUpload = kind === "active_review_final" || kind === "total_cycle_time";
+  const canChooseSnapshotTiming = kind === "open_jobs";
   const snapshotUploadLabel =
     kind === "active_review_final"
       ? "Active/Review/Final"
@@ -294,20 +300,26 @@ function UploadsPage() {
         : kind === "open_jobs"
           ? "Open Jobs"
           : "snapshot";
-  const uploadBucket = isSnapshotUpload ? defaultRange.to : effectiveFrom;
-  const uploadEffectiveFrom = isSnapshotUpload ? defaultRange.to : effectiveFrom;
-  const uploadEffectiveTo = isSnapshotUpload ? defaultRange.to : effectiveTo;
+  const usesCurrentWorkingWeek = isAlwaysTimelessUpload || (isSnapshotUpload && uploadTiming === "timeless");
+  const selectedUploadRange = usesCurrentWorkingWeek
+    ? currentWorkingRange
+    : { from: effectiveFrom, to: effectiveTo };
+  const uploadBucket = selectedUploadRange.from;
+  const uploadEffectiveFrom = selectedUploadRange.from;
+  const uploadEffectiveTo = selectedUploadRange.to;
 
   const uploadsQ = useQuery({
     queryKey: ["uploads"],
     enabled: !demoMode,
     queryFn: async () => {
-      const { data } = await supabase
-        .from("report_uploads")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(50);
-      return (data ?? []).filter((row) => !isSeededDemoUpload(row.file_name));
+      const data = await fetchAllSupabaseRows<any>((from, to) =>
+        supabase
+          .from("report_uploads")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .range(from, to),
+      );
+      return data.filter((row) => !isSeededDemoUpload(row.file_name));
     },
   });
 
@@ -571,9 +583,7 @@ function UploadsPage() {
       let replacementWarnings: string[] = [];
       if (!demoMode && completedUploadIds.length) {
         setUploadStage(
-          isSnapshotUpload
-            ? `Replacing older ${snapshotUploadLabel} snapshot...`
-            : "Replacing older files for this date range...",
+          `Replacing older matching files for ${formatWeek(uploadEffectiveFrom)} - ${formatWeek(uploadEffectiveTo)}...`,
         );
         try {
           const replacement = await replaceSupersededUploads({
@@ -644,9 +654,7 @@ function UploadsPage() {
       toast.success(rowSummary);
       if (replacedUploads) {
         toast.success(
-          isSnapshotUpload
-            ? `Replaced ${replacedUploads} older ${snapshotUploadLabel} snapshot${replacedUploads === 1 ? "" : "s"}.`
-            : `Replaced ${replacedUploads} older upload${replacedUploads === 1 ? "" : "s"} for this date range.`,
+          `Replaced ${replacedUploads} older matching upload${replacedUploads === 1 ? "" : "s"} for this date range.`,
         );
       }
       for (const warning of Array.from(new Set(customerSyncWarnings))) toast.warning(warning);
@@ -744,12 +752,15 @@ function UploadsPage() {
     ? "Upload .xlsx or .xls files only."
     : null;
   const pairedFileMessage = missingPairedFileMessage(files, kind);
+  const invalidUploadRange =
+    !uploadEffectiveFrom ||
+    !uploadEffectiveTo ||
+    uploadEffectiveFrom > uploadEffectiveTo;
   const uploadDisabled =
     upload.isPending ||
     files.length === 0 ||
     !!fileError ||
-    !hasRequiredPairedFiles(files, kind) ||
-    (!isSnapshotUpload && (!effectiveFrom || !effectiveTo || effectiveFrom > effectiveTo)) ||
+    invalidUploadRange ||
     (!demoMode && !canEdit(auth, "uploads")) ||
     (!demoMode && authLoading);
 
@@ -787,7 +798,26 @@ function UploadsPage() {
             </Select>
             <p className="text-xs text-muted-foreground">{reportKindHint(kind)}</p>
           </div>
-          {!isSnapshotUpload && (
+          {canChooseSnapshotTiming && (
+            <div className="space-y-2">
+              <Label>Upload timing</Label>
+              <Select value={uploadTiming} onValueChange={(value) => setUploadTiming(value as UploadTiming)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="timeless">Timeless / current weekly file</SelectItem>
+                  <SelectItem value="range">Past date range</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {usesCurrentWorkingWeek
+                  ? `Stored under ${formatWorkingWeekRange(currentWorkingRange)}.`
+                  : "Use this when loading older weekly data."}
+              </p>
+            </div>
+          )}
+          {!usesCurrentWorkingWeek && (
             <>
               <div className="space-y-2">
                 <Label>Effective from</Label>
@@ -821,15 +851,18 @@ function UploadsPage() {
               }}
             />
             <p className="text-xs text-muted-foreground">
-              {isSnapshotUpload
-                ? `This is a current snapshot. Uploading a new ${snapshotUploadLabel} file replaces the previous snapshot. The header row is not counted as imported data.`
-                : "Pick the date range this file's data covers. The header row is not counted as imported data."}
+              {usesCurrentWorkingWeek
+                ? isAlwaysTimelessUpload
+                  ? `${snapshotUploadLabel} is always a timeless current snapshot. The Dashboard always uses its newest upload, regardless of the selected date range. It only replaces an older matching file for ${formatWorkingWeekRange(currentWorkingRange)}. The header row is not counted as imported data.`
+                  : `Default current weekly file. It only replaces an older ${snapshotUploadLabel} file for ${formatWorkingWeekRange(currentWorkingRange)}. The header row is not counted as imported data.`
+                : `Pick the date range this file's data covers. Uploading the same report type for ${formatWeek(uploadEffectiveFrom)} - ${formatWeek(uploadEffectiveTo)} replaces the older matching file only for that range. The header row is not counted as imported data.`}
               {kind === "ticket_qc"
                 ? " Ticket QC can accept TicketQC REVIEW and TicketQC FINAL together, or one at a time."
                 : kind === "ticket_quality"
                   ? " Ticket Quality can accept Ticket Quality Error and TCR Total together, or one at a time."
                 : ""}
             </p>
+            {invalidUploadRange && <p className="text-xs text-destructive">Select a valid date range.</p>}
             {fileError && <p className="text-xs text-destructive">{fileError}</p>}
             {pairedFileMessage && (
               <p className="text-xs text-warning">{pairedFileMessage}</p>
@@ -923,9 +956,9 @@ function UploadsPage() {
       <Card>
         <div className="px-6 py-4 border-b flex items-center justify-between">
           <h2 className="font-display text-lg font-semibold">Upload history</h2>
-          <span className="text-xs text-muted-foreground">{uploads.length} uploads</span>
+          <span className="text-xs text-muted-foreground">{uploads.length} retained uploads</span>
         </div>
-        <div className="max-h-[520px] overflow-auto">
+        <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-muted/70 text-xs uppercase text-muted-foreground sticky top-0 backdrop-blur z-10">
               <tr>
@@ -975,7 +1008,7 @@ function UploadsPage() {
                       </span>
                     </td>
                     <td className="px-4 py-2.5 whitespace-nowrap">
-                      {isSnapshotReportKind(u.kind) ? "Current snapshot" : formatWeek(u.week_start)}
+                      {uploadAppliesTo(u)}
                     </td>
                     <td className="px-4 py-2.5 text-muted-foreground max-w-[220px] truncate">
                       {u.file_name}

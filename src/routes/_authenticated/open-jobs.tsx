@@ -1,43 +1,25 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Download, Search, Briefcase } from "lucide-react";
 import { downloadXlsx } from "@/lib/parse";
 import { cn } from "@/lib/utils";
 import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_CURRENT_WEEK, demoOpenJobs } from "@/lib/demoData";
 import { fetchLatestOpenJobsRows } from "@/lib/openJobsData";
+import {
+  openJobCustomerKey,
+  openJobCustomerName,
+  openJobDetailValue,
+  openJobReportRow,
+  sortOpenJobsBySourceOrder,
+  UNKNOWN_OPEN_JOB_CUSTOMER_NAME,
+} from "@/lib/openJobs";
 
 export const Route = createFileRoute("/_authenticated/open-jobs")({ component: OpenJobsPage });
-
-const AGE_BUCKETS = [
-  { value: "all", label: "All ages" },
-  { value: "0-7", label: "0–7 days" },
-  { value: "8-14", label: "8–14 days" },
-  { value: "15-30", label: "15–30 days" },
-  { value: "30+", label: "30+ days" },
-];
-
-function inBucket(age: number | null | undefined, bucket: string) {
-  if (bucket === "all") return true;
-  if (age == null) return false;
-  if (bucket === "0-7") return age <= 7;
-  if (bucket === "8-14") return age >= 8 && age <= 14;
-  if (bucket === "15-30") return age >= 15 && age <= 30;
-  if (bucket === "30+") return age > 30;
-  return true;
-}
-
-function ageBadge(age: number | null | undefined) {
-  if (age == null) return "bg-muted text-muted-foreground";
-  if (age <= 7) return "bg-success/15 text-success";
-  if (age <= 14) return "bg-warning/15 text-warning";
-  return "bg-destructive/15 text-destructive";
-}
 
 function OpenJobsPage() {
   const demoMode = useDemoMode();
@@ -61,60 +43,78 @@ function OpenJobsPage() {
   const latestUpload = jobsQ.data?.upload ?? null;
 
   const [selectedCust, setSelectedCust] = useState<string | null>(null);
-  const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [techFilter, setTechFilter] = useState<string>("all");
-  const [ageFilter, setAgeFilter] = useState<string>("all");
+  const [customerQuery, setCustomerQuery] = useState("");
+  const [jobIdFilter, setJobIdFilter] = useState("");
+  const [poFilter, setPoFilter] = useState("");
+
+  const sortedJobs = useMemo(() => sortOpenJobsBySourceOrder(jobs), [jobs]);
+
+  const groupedAll = useMemo(() => {
+    const map = new Map<string, { key: string; name: string; jobs: any[] }>();
+    for (const job of sortedJobs) {
+      const key = openJobCustomerKey(job);
+      const name = openJobCustomerName(job);
+      if (!map.has(key)) map.set(key, { key, name, jobs: [] });
+      map.get(key)!.jobs.push(job);
+    }
+
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.name === UNKNOWN_OPEN_JOB_CUSTOMER_NAME && b.name !== UNKNOWN_OPEN_JOB_CUSTOMER_NAME) return 1;
+      if (b.name === UNKNOWN_OPEN_JOB_CUSTOMER_NAME && a.name !== UNKNOWN_OPEN_JOB_CUSTOMER_NAME) return -1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [sortedJobs]);
 
   const grouped = useMemo(() => {
-    const map = new Map<string, { key: string; name: string; jobs: any[] }>();
-    for (const j of jobs) {
-      const key = j.customer_key;
-      if (!map.has(key)) map.set(key, { key, name: j.customer_name, jobs: [] });
-      map.get(key)!.jobs.push(j);
-    }
-    let list = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-    if (q) list = list.filter(c => c.name.toLowerCase().includes(q.toLowerCase()));
-    return list;
-  }, [jobs, q]);
+    const q = customerQuery.trim().toLowerCase();
+    if (!q) return groupedAll;
+    return groupedAll.filter(
+      (customer) =>
+        customer.name.toLowerCase().includes(q) ||
+        customer.key.toLowerCase().includes(q),
+    );
+  }, [customerQuery, groupedAll]);
 
-  const currentCust = grouped.find(c => c.key === selectedCust) ?? grouped[0];
-
-  const statusOptions = useMemo(() => {
-    const s = new Set<string>();
-    for (const j of jobs) if (j.status) s.add(j.status);
-    return Array.from(s).sort();
-  }, [jobs]);
-  const techOptions = useMemo(() => {
-    const s = new Set<string>();
-    for (const j of jobs) if (j.technician) s.add(j.technician);
-    return Array.from(s).sort();
-  }, [jobs]);
+  const currentCust = selectedCust ? groupedAll.find((customer) => customer.key === selectedCust) ?? null : null;
+  const activeJobs = currentCust ? currentCust.jobs : sortedJobs;
 
   const filteredJobs = useMemo(() => {
-    const jobs = currentCust?.jobs ?? [];
-    return jobs.filter(j =>
-      (statusFilter === "all" || j.status === statusFilter) &&
-      (techFilter === "all" || j.technician === techFilter) &&
-      inBucket(j.age_days, ageFilter)
-    );
-  }, [currentCust, statusFilter, techFilter, ageFilter]);
+    const jobNeedle = jobIdFilter.trim().toLowerCase();
+    const poNeedle = poFilter.trim().toLowerCase();
 
-  const totalJobs = jobs.length;
-  const detailValue = (job: any, key: string, fallback?: any) => {
-    const value = job.details && typeof job.details === "object" ? job.details[key] : null;
-    if (value == null || value === "") return fallback ?? null;
-    if (Array.isArray(value)) return value.filter(Boolean).join(" / ");
-    return value;
-  };
+    return activeJobs.filter((job) => {
+      const jobId = String(openJobDetailValue(job, "job_id_job_ref", job.job_no) ?? "").toLowerCase();
+      const purchaseOrder = String(
+        openJobDetailValue(
+          job,
+          "purchase_order_customer_job_lines",
+          openJobDetailValue(job, "purchase_order_customer_job", job.ticket_no),
+        ) ?? "",
+      ).toLowerCase();
+
+      return (!jobNeedle || jobId.includes(jobNeedle)) && (!poNeedle || purchaseOrder.includes(poNeedle));
+    });
+  }, [activeJobs, jobIdFilter, poFilter]);
+
+  const totalJobs = sortedJobs.length;
+  const totalCustomers = groupedAll.length;
+  const viewTitle = currentCust ? currentCust.name : "All open jobs";
+  const viewCount = currentCust ? currentCust.jobs.length : sortedJobs.length;
+
+  function downloadCurrentView() {
+    downloadXlsx(
+      filteredJobs.map((job) => openJobReportRow(job, { includeCustomer: true })),
+      `${currentCust ? currentCust.name : "all"}-open-jobs.xlsx`,
+    );
+  }
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-3xl font-semibold">Open Jobs</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {totalJobs} open jobs across {grouped.length} customers - grouped from the current upload.
+          <p className="mt-1 text-sm text-muted-foreground">
+            {totalJobs} open jobs across {totalCustomers} customers from the current upload.
           </p>
         </div>
         {latestUpload?.file_name && (
@@ -126,111 +126,170 @@ function OpenJobsPage() {
       </header>
 
       {jobs.length === 0 ? (
-        <Card className="p-8 text-center border-dashed">
-          <Briefcase className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+        <Card className="border-dashed p-8 text-center">
+          <Briefcase className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">Upload an Open Jobs report to see customer-grouped jobs here.</p>
         </Card>
       ) : (
-        <div className="grid md:grid-cols-[300px_1fr] gap-6">
+        <div className="grid min-w-0 gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
           <Card className="p-4">
             <div className="relative mb-3">
-              <Search className="w-4 h-4 absolute left-3 top-2.5 text-muted-foreground" />
-              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search customer…" className="pl-9" />
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                value={customerQuery}
+                onChange={(event) => setCustomerQuery(event.target.value)}
+                placeholder="Search customers..."
+                className="pl-9"
+              />
             </div>
-            <div className="space-y-1 max-h-[640px] overflow-auto">
-              {grouped.map(c => (
-                <button key={c.key} onClick={() => setSelectedCust(c.key)}
-                  className={cn("w-full text-left px-3 py-2 rounded-md text-sm transition-colors",
-                    currentCust?.key === c.key ? "bg-primary/10 text-foreground" : "hover:bg-muted")}>
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium truncate">{c.name}</span>
-                    <span className="text-xs text-muted-foreground">{c.jobs.length}</span>
+            <div className="mb-2">
+              <button
+                type="button"
+                onClick={() => setSelectedCust(null)}
+                className={cn(
+                  "w-full rounded-md px-3 py-2 text-left text-sm transition-colors",
+                  !currentCust ? "bg-primary/10 text-foreground" : "hover:bg-muted",
+                )}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium">All jobs</span>
+                  <span className="text-xs text-muted-foreground">{totalJobs}</span>
+                </div>
+              </button>
+            </div>
+            <div className="max-h-[640px] space-y-1 overflow-auto pr-1">
+              {grouped.map((customer) => (
+                <button
+                  key={customer.key}
+                  type="button"
+                  onClick={() => setSelectedCust(customer.key)}
+                  className={cn(
+                    "w-full rounded-md px-3 py-2 text-left text-sm transition-colors",
+                    currentCust?.key === customer.key ? "bg-primary/10 text-foreground" : "hover:bg-muted",
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="min-w-0 truncate font-medium">{customer.name}</span>
+                    <span className="text-xs text-muted-foreground">{customer.jobs.length}</span>
                   </div>
+                  {customer.name === UNKNOWN_OPEN_JOB_CUSTOMER_NAME && (
+                    <div className="mt-1 text-[10px] uppercase tracking-wide text-warning">
+                      No customer name in upload
+                    </div>
+                  )}
                 </button>
               ))}
+              {grouped.length === 0 && (
+                <div className="px-3 py-8 text-center text-sm text-muted-foreground">
+                  No customers match that search.
+                </div>
+              )}
             </div>
           </Card>
 
-          <Card>
-            <div className="px-6 py-4 border-b space-y-3">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div>
-                  <h2 className="font-display text-lg font-semibold">{currentCust?.name ?? "—"}</h2>
-                  <p className="text-xs text-muted-foreground">{filteredJobs.length} of {currentCust?.jobs.length ?? 0} open jobs</p>
+          <Card className="min-w-0 overflow-hidden">
+            <div className="space-y-3 border-b px-6 py-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="font-display text-lg font-semibold">{viewTitle}</h2>
+                  <p className="text-xs text-muted-foreground">
+                    {filteredJobs.length} of {viewCount} open jobs
+                    {!currentCust ? " with customer shown on each row" : ""}
+                  </p>
                 </div>
-                {currentCust && (
-                  <Button size="sm" variant="outline" onClick={() => downloadXlsx(
-                    filteredJobs.map(j => ({
-                      "Job ID / Job Ref.": detailValue(j, "job_id_job_ref", j.job_no),
-                      "Purchase Order # / Customer Job#": detailValue(j, "purchase_order_customer_job_lines", detailValue(j, "purchase_order_customer_job", j.ticket_no)),
-                      "Srv Int": detailValue(j, "srv_int", j.order_type),
-                      Zone: detailValue(j, "zone", j.status),
-                      "Opened / First Ticket": detailValue(j, "opened_first_ticket_lines", detailValue(j, "opened_first_ticket")),
-                      "Last Ticket": detailValue(j, "last_ticket", j.last_activity),
-                      "Job Address/City": detailValue(j, "job_address_city_lines", detailValue(j, "job_address_city", j.address)),
-                      Foreman: detailValue(j, "foreman", j.technician),
-                    })),
-                    `${currentCust.name}-open-jobs.xlsx`
-                  )}>
-                    <Download className="w-4 h-4 mr-2" />Download
-                  </Button>
-                )}
+                <Button size="sm" variant="outline" onClick={downloadCurrentView}>
+                  <Download className="mr-2 h-4 w-4" />Download
+                </Button>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All statuses</SelectItem>
-                    {statusOptions.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Select value={techFilter} onValueChange={setTechFilter}>
-                  <SelectTrigger><SelectValue placeholder="Technician" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All technicians</SelectItem>
-                    {techOptions.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Select value={ageFilter} onValueChange={setAgeFilter}>
-                  <SelectTrigger><SelectValue placeholder="Aging" /></SelectTrigger>
-                  <SelectContent>
-                    {AGE_BUCKETS.map(b => <SelectItem key={b.value} value={b.value}>{b.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+              <div className="grid gap-2 md:grid-cols-2">
+                <div className="relative">
+                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    value={jobIdFilter}
+                    onChange={(event) => setJobIdFilter(event.target.value)}
+                    placeholder="Filter by job ID"
+                    className="pl-9"
+                  />
+                </div>
+                <div className="relative">
+                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    value={poFilter}
+                    onChange={(event) => setPoFilter(event.target.value)}
+                    placeholder="Filter by purchase order / customer job"
+                    className="pl-9"
+                  />
+                </div>
               </div>
             </div>
-            <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-                <tr>
-                  <th className="text-left px-4 py-3 font-medium">Job ID / Job Ref.</th>
-                  <th className="text-left px-4 py-3 font-medium">Purchase Order # / Customer Job#</th>
-                  <th className="text-left px-4 py-3 font-medium">Srv Int</th>
-                  <th className="text-left px-4 py-3 font-medium">Zone</th>
-                  <th className="text-left px-4 py-3 font-medium">Opened / First Ticket</th>
-                  <th className="text-left px-4 py-3 font-medium">Last Ticket</th>
-                  <th className="text-left px-4 py-3 font-medium">Job Address/City</th>
-                  <th className="text-left px-4 py-3 font-medium">Foreman</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredJobs.map((j: any) => (
-                  <tr key={j.id} className="border-t">
-                    <td className="px-4 py-2.5 font-medium whitespace-nowrap">{detailValue(j, "job_id_job_ref", j.job_no) ?? "-"}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground max-w-[260px] whitespace-pre-line">{detailValue(j, "purchase_order_customer_job_lines", detailValue(j, "purchase_order_customer_job", j.ticket_no)) ?? "-"}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{detailValue(j, "srv_int", j.order_type) ?? "-"}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{detailValue(j, "zone", j.status) ?? "-"}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{detailValue(j, "opened_first_ticket_lines", detailValue(j, "opened_first_ticket")) ?? "-"}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{detailValue(j, "last_ticket", j.last_activity) ?? "-"}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground max-w-[300px] whitespace-pre-line">{detailValue(j, "job_address_city_lines", detailValue(j, "job_address_city", j.address)) ?? "-"}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{detailValue(j, "foreman", j.technician) ?? "-"}</td>
+            <div className="max-w-full overflow-x-auto">
+              <table className="min-w-[1180px] text-sm">
+                <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-medium">Customer</th>
+                    <th className="px-4 py-3 text-left font-medium">Job ID / Job Ref.</th>
+                    <th className="px-4 py-3 text-left font-medium">Purchase Order # / Customer Job#</th>
+                    <th className="px-4 py-3 text-left font-medium">Srv Int</th>
+                    <th className="px-4 py-3 text-left font-medium">Zone</th>
+                    <th className="px-4 py-3 text-left font-medium">Opened / First Ticket</th>
+                    <th className="px-4 py-3 text-left font-medium">Last Ticket</th>
+                    <th className="px-4 py-3 text-left font-medium">Job Address/City</th>
+                    <th className="px-4 py-3 text-left font-medium">Foreman</th>
                   </tr>
-                ))}
-                {filteredJobs.length === 0 && (
-                  <tr><td colSpan={8} className="text-center py-8 text-sm text-muted-foreground">No jobs match these filters.</td></tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {filteredJobs.map((job: any) => {
+                    const customerName = openJobCustomerName(job);
+                    return (
+                      <tr key={job.id} className="border-t">
+                        <td className="px-4 py-2.5">
+                          <div className="font-medium">
+                            {customerName === UNKNOWN_OPEN_JOB_CUSTOMER_NAME ? (
+                              <span className="rounded bg-warning/15 px-2 py-0.5 text-warning">Unknown</span>
+                            ) : (
+                              customerName
+                            )}
+                          </div>
+                          <div className="font-mono text-[11px] text-muted-foreground">{openJobCustomerKey(job)}</div>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2.5 font-medium">
+                          {openJobDetailValue(job, "job_id_job_ref", job.job_no) ?? "-"}
+                        </td>
+                        <td className="max-w-[260px] whitespace-pre-line px-4 py-2.5 text-muted-foreground">
+                          {openJobDetailValue(
+                            job,
+                            "purchase_order_customer_job_lines",
+                            openJobDetailValue(job, "purchase_order_customer_job", job.ticket_no),
+                          ) ?? "-"}
+                        </td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{openJobDetailValue(job, "srv_int", job.order_type) ?? "-"}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{openJobDetailValue(job, "zone", job.status) ?? "-"}</td>
+                        <td className="whitespace-nowrap px-4 py-2.5 text-muted-foreground">
+                          {openJobDetailValue(job, "opened_first_ticket_lines", openJobDetailValue(job, "opened_first_ticket")) ?? "-"}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2.5 text-muted-foreground">
+                          {openJobDetailValue(job, "last_ticket", job.last_activity) ?? "-"}
+                        </td>
+                        <td className="max-w-[300px] whitespace-pre-line px-4 py-2.5 text-muted-foreground">
+                          {openJobDetailValue(
+                            job,
+                            "job_address_city_lines",
+                            openJobDetailValue(job, "job_address_city", job.address),
+                          ) ?? "-"}
+                        </td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{openJobDetailValue(job, "foreman", job.technician) ?? "-"}</td>
+                      </tr>
+                    );
+                  })}
+                  {filteredJobs.length === 0 && (
+                    <tr>
+                      <td colSpan={9} className="py-8 text-center text-sm text-muted-foreground">
+                        No jobs match these filters.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </Card>
         </div>

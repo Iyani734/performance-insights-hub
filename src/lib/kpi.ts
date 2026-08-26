@@ -16,6 +16,7 @@ import {
   isTotalCycleTimeUpload,
 } from "@/lib/reportTypes";
 import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
+import { formatDateOnly } from "@/lib/dateLabels";
 
 export type KpiTarget = {
   id: string;
@@ -97,8 +98,7 @@ export function weekStartOf(d: Date): string {
 }
 
 export function formatWeek(iso: string): string {
-  const d = new Date(iso + "T00:00:00Z");
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  return formatDateOnly(iso);
 }
 
 function addDaysUtc(iso: string, days: number): string {
@@ -112,19 +112,26 @@ export async function computeAutoKpis(week: string) {
 }
 
 export async function computeAutoKpisForRange(from: string, to: string) {
-  const uploads = await fetchUploadsForRange(from, to);
-  const activeUpload = await fetchLatestActiveReviewFinalUpload();
-  const cycleUpload = await fetchLatestTotalCycleTimeUpload();
+  const uploads = await fetchAvailableUploads();
+  const rangeUploads = uploads.filter((upload) => uploadOverlapsRange(upload, from, to));
+  // Active/Review/Final and Invoice Cycle Time are current snapshots. Their newest
+  // upload must be visible regardless of the Dashboard or Analytics date range.
+  const activeUpload = latestUpload(uploads.filter(isActiveReviewFinalUpload));
+  const cycleUpload = latestUpload(uploads.filter(isTotalCycleTimeUpload));
   const activeUploads = activeUpload ? [activeUpload] : [];
-  const qcUploads = uploads.filter(isTicketQcUpload);
-  const qualityUploads = uploads.filter(isTicketQualityUpload);
+  const qcUploads = rangeUploads.filter(isTicketQcUpload);
+  const qualityUploads = rangeUploads.filter(isTicketQualityUpload);
+  // A replacement Ticket Quality Error file supersedes every older error file
+  // for this KPI. Using every overlapping upload double-counts an issue when a
+  // user uploads a corrected/broader version of the report.
+  const qualityErrorUpload = latestUpload(qualityUploads.filter(isTicketQualityErrorUpload));
   const cycleUploads = cycleUpload ? [cycleUpload] : [];
 
   const [tickets, cycleRows, qualityErrorRows] = await Promise.all([
     fetchTicketRowsByUploadIds(activeUploads.map((upload) => upload.id), "tickets"),
     fetchTicketRowsByUploadIds(cycleUploads.map((upload) => upload.id), "invoiced"),
     fetchQualityErrorRowsByUploadIds(
-      qualityUploads.filter(isTicketQualityErrorUpload).map((upload) => upload.id),
+      qualityErrorUpload ? [qualityErrorUpload.id] : [],
       from,
       to,
     ),
@@ -169,7 +176,7 @@ type UploadLike = {
   created_at: string | null;
 };
 
-async function fetchUploadsForRange(from: string, to: string): Promise<UploadLike[]> {
+async function fetchAvailableUploads(): Promise<UploadLike[]> {
   const data = await fetchAllSupabaseRows<UploadLike>((rangeFrom, rangeTo) =>
     supabase
       .from("report_uploads")
@@ -181,44 +188,14 @@ async function fetchUploadsForRange(from: string, to: string): Promise<UploadLik
   return data.filter((upload) => {
     if (isSeededDemoUpload(upload.file_name)) return false;
     if (upload.status === "failed" || upload.status === "processing") return false;
-    const uploadFrom = upload.effective_from ?? upload.week_start;
-    const uploadTo = upload.effective_to ?? addDaysUtc(upload.week_start, 6);
-    return uploadFrom <= to && uploadTo >= from;
+    return true;
   });
 }
 
-async function fetchLatestActiveReviewFinalUpload(): Promise<UploadLike | null> {
-  const data = await fetchAllSupabaseRows<UploadLike>((rangeFrom, rangeTo) =>
-    supabase
-      .from("report_uploads")
-      .select("id,kind,file_name,row_count,week_start,effective_from,effective_to,status,created_at")
-      .order("created_at", { ascending: false })
-      .range(rangeFrom, rangeTo),
-  );
-
-  return latestUpload(
-    data
-      .filter((upload) => !isSeededDemoUpload(upload.file_name))
-      .filter((upload) => upload.status !== "failed" && upload.status !== "processing")
-      .filter(isActiveReviewFinalUpload),
-  );
-}
-
-async function fetchLatestTotalCycleTimeUpload(): Promise<UploadLike | null> {
-  const data = await fetchAllSupabaseRows<UploadLike>((rangeFrom, rangeTo) =>
-    supabase
-      .from("report_uploads")
-      .select("id,kind,file_name,row_count,week_start,effective_from,effective_to,status,created_at")
-      .order("created_at", { ascending: false })
-      .range(rangeFrom, rangeTo),
-  );
-
-  return latestUpload(
-    data
-      .filter((upload) => !isSeededDemoUpload(upload.file_name))
-      .filter((upload) => upload.status !== "failed" && upload.status !== "processing")
-      .filter(isTotalCycleTimeUpload),
-  );
+function uploadOverlapsRange(upload: UploadLike, from: string, to: string) {
+  const uploadFrom = upload.effective_from ?? upload.week_start;
+  const uploadTo = upload.effective_to ?? addDaysUtc(upload.week_start, 6);
+  return uploadFrom <= to && uploadTo >= from;
 }
 
 async function fetchTicketRowsByUploadIds(uploadIds: string[], kind: "tickets" | "invoiced") {

@@ -22,7 +22,6 @@ const PAGE_LABELS: Record<string, string> = {
   "open-jobs": "Open Jobs",
   customers: "Customers",
   emails: "Emails",
-  history: "History",
   support: "Support",
   settings: "Settings",
 };
@@ -73,6 +72,11 @@ function SettingsPage() {
     queryKey: ["system_logs"],
     enabled: isSuperAdmin,
     queryFn: async () => {
+      const rpcResult = await (supabase as any).rpc("get_system_logs", { _limit: 200 });
+      const rpcMissing = rpcResult.error && /Could not find the function|schema cache|does not exist/i.test(rpcResult.error.message ?? "");
+      if (!rpcResult.error) return (rpcResult.data ?? []) as any[];
+      if (!rpcMissing) throw rpcResult.error;
+
       const { data, error } = await (supabase.from as any)("system_logs")
         .select("*")
         .order("created_at", { ascending: false })
@@ -112,6 +116,28 @@ function SettingsPage() {
     return m;
   }, [usersQ.data]);
 
+  async function logSystemAction(input: {
+    action: string;
+    entityType: string;
+    entityId?: string | null;
+    summary: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    if (!user || !isSuperAdmin) return;
+    const { error } = await (supabase.from as any)("system_logs").insert({
+      actor_id: user.id,
+      actor_email: user.email,
+      action: input.action,
+      entity_type: input.entityType,
+      entity_id: input.entityId ?? null,
+      summary: input.summary,
+      metadata: input.metadata ?? {},
+    });
+    if (error) {
+      console.warn("[system_logs] Could not write log entry", error);
+    }
+  }
+
   const save = useMutation({
     mutationFn: async (t: KpiTarget) => {
       const patch = {
@@ -123,6 +149,13 @@ function SettingsPage() {
       if (isSuperAdmin) {
         const { error } = await supabase.from("kpi_targets").update(patch).eq("id", t.id);
         if (error) throw error;
+        await logSystemAction({
+          action: "kpi_target_updated",
+          entityType: "kpi_target",
+          entityId: t.id,
+          summary: `Updated KPI target "${t.label}"`,
+          metadata: { kpi_key: t.kpi_key, changes: patch },
+        });
         return { direct: true };
       }
       // Non-super-admin: submit for approval
@@ -135,6 +168,13 @@ function SettingsPage() {
         changes: patch,
       });
       if (error) throw error;
+      await logSystemAction({
+        action: "edit_request_created",
+        entityType: "edit_request",
+        entityId: t.id,
+        summary: `Submitted KPI target update request for "${t.label}"`,
+        metadata: { kpi_key: t.kpi_key, changes: patch },
+      });
       return { direct: false };
     },
     onSuccess: (r) => {
@@ -158,13 +198,34 @@ function SettingsPage() {
       };
       const { error } = await (supabase.from as any)("page_permissions").upsert(row, { onConflict: "user_id,page" });
       if (error) throw error;
+      const target = usersById.get(userId);
+      await logSystemAction({
+        action: "page_permission_updated",
+        entityType: "page_permission",
+        entityId: userId,
+        summary: `${target?.email || target?.name || userId} ${field === "can_view" ? "view" : "edit"} access for ${PAGE_LABELS[page] ?? page} set to ${value ? "on" : "off"}`,
+        metadata: { target_user_id: userId, target_email: target?.email ?? null, page, field, value },
+      });
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["all_profiles_and_roles"] }); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["all_profiles_and_roles"] });
+      qc.invalidateQueries({ queryKey: ["system_logs"] });
+    },
     onError: (e: any) => toast.error(e.message),
   });
 
   const setUserAccess = useMutation({
     mutationFn: async ({ userId, grant }: { userId: string; grant: boolean }) => {
+      const target = usersById.get(userId);
+      if (!grant) {
+        if (userId === user?.id) throw new Error("You cannot deny your own access.");
+
+        const denyResult = await (supabase as any).rpc("deny_user_access", { _user_id: userId });
+        const missingRpc = denyResult.error && /Could not find the function|schema cache|does not exist/i.test(denyResult.error.message ?? "");
+        if (!denyResult.error) return { deniedByRpc: true };
+        if (!missingRpc) throw denyResult.error;
+      }
+
       const rows = DEFAULT_PAGES.map((page) => ({
         user_id: userId,
         page,
@@ -175,9 +236,17 @@ function SettingsPage() {
       }));
       const { error } = await (supabase.from as any)("page_permissions").upsert(rows, { onConflict: "user_id,page" });
       if (error) throw error;
+      await logSystemAction({
+        action: grant ? "access_granted" : "access_denied",
+        entityType: "user_access",
+        entityId: userId,
+        summary: `${target?.email || target?.name || userId} was ${grant ? "approved with full access" : "denied app access"}`,
+        metadata: { target_user_id: userId, target_email: target?.email ?? null, pages: DEFAULT_PAGES, grant },
+      });
+      return { deniedByRpc: false };
     },
     onSuccess: (_data, vars) => {
-      toast.success(vars.grant ? "User approved with full access" : "User access blocked");
+      toast.success(vars.grant ? "User approved with full access" : "User access denied");
       qc.invalidateQueries({ queryKey: ["all_profiles_and_roles"] });
       qc.invalidateQueries({ queryKey: ["system_logs"] });
     },
@@ -198,6 +267,13 @@ function SettingsPage() {
         reviewed_at: new Date().toISOString(),
       }).eq("id", req.id);
       if (error) throw error;
+      await logSystemAction({
+        action: approve ? "edit_request_approved" : "edit_request_rejected",
+        entityType: "edit_request",
+        entityId: req.id,
+        summary: `${approve ? "Approved" : "Rejected"} ${req.summary ?? "edit request"}`,
+        metadata: { target_table: req.target_table, target_id: req.target_id, changes: req.changes },
+      });
     },
     onSuccess: (_d, v) => { toast.success(v.approve ? "Approved & applied" : "Rejected"); qc.invalidateQueries(); },
     onError: (e: any) => toast.error(e.message),
@@ -380,7 +456,7 @@ function SettingsPage() {
         <Card>
           <div className="px-6 py-4 border-b">
             <h2 className="font-display text-lg font-semibold">Users & page access</h2>
-            <p className="text-xs text-muted-foreground mt-1">New accounts start blocked. Approve company users, or block access to disconnect a user.</p>
+            <p className="text-xs text-muted-foreground mt-1">New accounts start blocked. Approve company users, or deny access to remove a user's page access and downgrade prior admin access.</p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -397,7 +473,10 @@ function SettingsPage() {
               <tbody>
                 {Array.from(usersById.entries()).map(([uid, u]) => {
                   const isSuper = u.roles.includes("super_admin");
+                  const isSelf = uid === user?.id;
+                  const hasElevatedRole = u.roles.includes("admin");
                   const hasAccess = DEFAULT_PAGES.some((page) => !!u.perms[page]?.can_view);
+                  const canDeny = !isSelf && (hasAccess || hasElevatedRole || isSuper);
                   return (
                     <tr key={uid} className="border-t">
                       <td className="px-4 py-3">
@@ -410,9 +489,9 @@ function SettingsPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        {isSuper ? (
-                          <span className="text-xs text-primary">always on</span>
-                        ) : hasAccess ? (
+                        {isSelf ? (
+                          <span className="text-xs text-primary">always on (you)</span>
+                        ) : canDeny ? (
                           <Button
                             size="sm"
                             variant="outline"
@@ -420,7 +499,7 @@ function SettingsPage() {
                             onClick={() => setUserAccess.mutate({ userId: uid, grant: false })}
                             disabled={setUserAccess.isPending}
                           >
-                            <LockKeyhole className="w-3.5 h-3.5" />Block
+                            <LockKeyhole className="w-3.5 h-3.5" />Deny access
                           </Button>
                         ) : (
                           <Button
@@ -492,6 +571,13 @@ function SettingsPage() {
                 </tr>
               </thead>
               <tbody>
+                {logsQ.isError && (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-6 text-center text-sm text-destructive">
+                      Could not load system logs: {(logsQ.error as Error).message}
+                    </td>
+                  </tr>
+                )}
                 {(logsQ.data ?? []).map((log) => (
                   <tr key={log.id} className="border-t">
                     <td className="px-4 py-2.5 whitespace-nowrap text-muted-foreground">
@@ -506,7 +592,7 @@ function SettingsPage() {
                     <td className="px-4 py-2.5 text-muted-foreground">{log.summary ?? log.entity_type}</td>
                   </tr>
                 ))}
-                {!logsQ.isLoading && (logsQ.data ?? []).length === 0 && (
+                {!logsQ.isLoading && !logsQ.isError && (logsQ.data ?? []).length === 0 && (
                   <tr><td colSpan={4} className="text-center py-8 text-muted-foreground text-sm">No logs yet.</td></tr>
                 )}
               </tbody>

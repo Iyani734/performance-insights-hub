@@ -4,12 +4,12 @@ import { supabase } from "@/integrations/supabase/client";
 import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import {
-  Mail,
   Send,
   AlertTriangle,
   CheckCircle2,
@@ -20,13 +20,15 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { downloadXlsx } from "@/lib/parse";
-import { useAuth } from "@/lib/useAuth";
 import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_CURRENT_WEEK, demoCustomers, demoEmailJobs, demoOpenJobs } from "@/lib/demoData";
 import { isSeededDemoEmail } from "@/lib/liveData";
 import { sendOpenJobsEmails } from "@/lib/emailSend";
 import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
 import { fetchLatestOpenJobsRows } from "@/lib/openJobsData";
+import { openJobCustomerKey, openJobCustomerName, openJobDetailValue, openJobReportRow } from "@/lib/openJobs";
+import { formatDateOnly } from "@/lib/dateLabels";
+import { isQueuedTestEmail } from "@/lib/emailJobs";
 
 export const Route = createFileRoute("/_authenticated/emails")({ component: EmailsPage });
 
@@ -48,7 +50,7 @@ type SendRequest = {
   message?: string;
 };
 
-const DEFAULT_EMAIL_SUBJECT_TEMPLATE = "Open Jobs Report - {{customer_name}}";
+const DEFAULT_EMAIL_SUBJECT_TEMPLATE = "Open Jobs Report - {{customer_name}} - Week of {{week}}";
 const DEFAULT_EMAIL_MESSAGE_TEMPLATE = [
   "Hi {{customer_name}} team,",
   "",
@@ -58,7 +60,6 @@ const DEFAULT_EMAIL_MESSAGE_TEMPLATE = [
 
 function EmailsPage() {
   const qc = useQueryClient();
-  const { user } = useAuth();
   const demoMode = useDemoMode();
   const [preview, setPreview] = useState<EmailRow | null>(null);
   const [draftSubject, setDraftSubject] = useState("");
@@ -66,6 +67,7 @@ function EmailsPage() {
   const [bulkSubject, setBulkSubject] = useState(DEFAULT_EMAIL_SUBJECT_TEMPLATE);
   const [bulkMessage, setBulkMessage] = useState(DEFAULT_EMAIL_MESSAGE_TEMPLATE);
   const [confirmBulkOpen, setConfirmBulkOpen] = useState(false);
+  const [selectedBulkCustomerIds, setSelectedBulkCustomerIds] = useState<string[]>([]);
 
   const jobsQ = useQuery({
     queryKey: ["oj_current_for_emails", demoMode],
@@ -111,7 +113,7 @@ function EmailsPage() {
           .order("created_at", { ascending: false })
           .range(from, to),
       );
-      return data.filter((row) => !isSeededDemoEmail(row.customer_email));
+      return data.filter((row) => !isSeededDemoEmail(row.customer_email) && !isQueuedTestEmail(row));
     },
     enabled: !!w,
   });
@@ -119,9 +121,10 @@ function EmailsPage() {
   const rows = useMemo<EmailRow[]>(() => {
     const byKey = new Map<string, any[]>();
     for (const job of currentOpenJobs) {
-      const arr = byKey.get(job.customer_key) ?? [];
+      const key = openJobCustomerKey(job);
+      const arr = byKey.get(key) ?? [];
       arr.push(job);
-      byKey.set(job.customer_key, arr);
+      byKey.set(key, arr);
     }
 
     const custByKey = new Map((custsQ.data ?? []).map((customer: any) => [customer.key, customer]));
@@ -137,12 +140,7 @@ function EmailsPage() {
             : !customer.email
               ? "no_email"
               : "ready";
-        const history = emailJobs.filter((job: any) => {
-          if (customer?.id && job.customer_id === customer.id) return true;
-          const customerEmail = String(customer?.email ?? "").trim().toLowerCase();
-          const jobEmail = String(job.customer_email ?? "").trim().toLowerCase();
-          return !!customerEmail && customerEmail === jobEmail;
-        });
+        const history = emailJobs.filter((job: any) => isEmailJobForCurrentRecipient(job, customer));
         const sentEmailJob = history.find(isSentEmailJob) ?? null;
         const latestEmailJob = history[0] ?? null;
         const deliveryStatus: EmailRow["deliveryStatus"] = sentEmailJob
@@ -155,14 +153,14 @@ function EmailsPage() {
 
         return {
           key,
-          name: jobs[0].customer_name,
+          name: openJobCustomerName(jobs[0]),
           jobs,
           customer,
           setupStatus,
           deliveryStatus,
           latestEmailJob,
           sentEmailJob,
-          canSend: setupStatus === "ready" && deliveryStatus !== "sent",
+          canSend: setupStatus === "ready",
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -174,45 +172,6 @@ function EmailsPage() {
   const missingEmail = rows.filter(
     (row) => row.setupStatus === "no_email" || row.setupStatus === "unmatched",
   ).length;
-
-  const generateBatch = useMutation({
-    mutationFn: async () => {
-      if (!w || !user) throw new Error("Select a week first");
-      const batch_id = crypto.randomUUID();
-      const payload = rows
-        .filter((row) => !row.sentEmailJob && !row.latestEmailJob)
-        .map((row) => ({
-          batch_id,
-          week_start: w,
-          customer_id: row.customer?.id ?? null,
-          customer_name: row.name,
-          customer_email: row.customer?.email ?? null,
-          cc_emails: row.customer?.cc_emails ?? null,
-          subject: subjectFor(row.name, w),
-          attachment_name: attachmentFor(row.name, w),
-          job_count: row.jobs.length,
-          status: row.setupStatus === "ready" ? "pending" : "failed",
-          error:
-            row.setupStatus === "ready"
-              ? null
-              : row.setupStatus === "no_email"
-                ? "Missing email"
-                : row.setupStatus === "disabled"
-                  ? "Customer disabled"
-                  : "Customer not on file",
-          created_by: user.id,
-        }));
-      if (!rows.length) throw new Error("No open jobs for this week");
-      if (!payload.length) throw new Error("All customers already have email activity for this week");
-      const { error } = await supabase.from("email_jobs").insert(payload);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      toast.success("Batch prepared");
-      qc.invalidateQueries({ queryKey: ["email_jobs"] });
-    },
-    onError: (e: any) => toast.error(e.message),
-  });
 
   const sendEmails = useMutation({
     mutationFn: async (request: SendRequest = {}) => {
@@ -233,24 +192,6 @@ function EmailsPage() {
       qc.invalidateQueries();
     },
     onError: (e: any) => toast.error(e.message),
-  });
-
-  const markSent = useMutation({
-    mutationFn: async (job: any) => {
-      const now = new Date().toISOString();
-      const { error } = await supabase
-        .from("email_jobs")
-        .update({ status: "sent", sent_at: now, error: null })
-        .eq("id", job.id);
-      if (error) throw error;
-      if (job.customer_id) {
-        await supabase
-          .from("customers")
-          .update({ last_email_sent_at: now, updated_at: now })
-          .eq("id", job.customer_id);
-      }
-    },
-    onSuccess: () => qc.invalidateQueries(),
   });
 
   const retry = useMutation({
@@ -278,23 +219,49 @@ function EmailsPage() {
     sendEmails.mutate({ ...message, customerIds: [row.customer.id] });
   }
 
+  const selectedBulkRows = sendableRows.filter(
+    (row) => !!row.customer?.id && selectedBulkCustomerIds.includes(row.customer.id),
+  );
+  const allBulkRecipientsSelected =
+    sendableRows.length > 0 && selectedBulkRows.length === sendableRows.length;
+
+  function openBulkSend() {
+    setSelectedBulkCustomerIds(
+      sendableRows
+        .filter((row) => row.deliveryStatus !== "sent")
+        .map((row) => row.customer?.id)
+        .filter((id): id is string => !!id),
+    );
+    setConfirmBulkOpen(true);
+  }
+
+  function setBulkRecipientSelected(customerId: string, selected: boolean) {
+    setSelectedBulkCustomerIds((current) =>
+      selected ? Array.from(new Set([...current, customerId])) : current.filter((id) => id !== customerId),
+    );
+  }
+
+  function setAllBulkRecipientsSelected(selected: boolean) {
+    setSelectedBulkCustomerIds(
+      selected
+        ? sendableRows.map((row) => row.customer?.id).filter((id): id is string => !!id)
+        : [],
+    );
+  }
+
   function bulkSend() {
-    const ids = sendableRows.map((row) => row.customer?.id).filter((id): id is string => !!id);
+    const ids = selectedBulkRows.map((row) => row.customer?.id).filter((id): id is string => !!id);
+    if (!ids.length) {
+      toast.error("Select at least one customer to send emails.");
+      return;
+    }
     sendEmails.mutate({ customerIds: ids, subject: bulkSubject, message: bulkMessage });
   }
 
   function downloadReport(row: EmailRow) {
     downloadXlsx(
-      row.jobs.map((job: any) => ({
-        Job: job.job_no,
-        Ticket: job.ticket_no,
-        Address: job.address,
-        Status: job.status,
-        Age: job.age_days,
-        Technician: job.technician,
-        Notes: job.notes ?? job.last_activity,
-      })),
-      attachmentFor(row.name, w ?? "current").replace(/\.csv$/, ".xlsx"),
+      row.jobs.map((job: any) => openJobReportRow(job)),
+      attachmentFor(row.name, w ?? "current"),
     );
   }
 
@@ -304,7 +271,7 @@ function EmailsPage() {
         <div>
           <h1 className="font-display text-3xl font-semibold">Customer Emails</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Send per-customer Open Jobs reports from the current upload and skip customers already sent.
+            Send per-customer Open Jobs reports from the current upload, including repeat sends when needed.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -317,15 +284,7 @@ function EmailsPage() {
             </div>
           )}
           <Button
-            variant="outline"
-            onClick={() => generateBatch.mutate()}
-            disabled={!w || generateBatch.isPending}
-          >
-            <Mail className="w-4 h-4 mr-2" />
-            Prepare queue
-          </Button>
-          <Button
-            onClick={() => setConfirmBulkOpen(true)}
+            onClick={openBulkSend}
             disabled={!w || sendableRows.length === 0 || sendEmails.isPending}
           >
             <Send className="w-4 h-4 mr-2" />
@@ -388,22 +347,15 @@ function EmailsPage() {
                     <Button size="sm" variant="ghost" onClick={() => downloadReport(row)} title="Download">
                       <Download className="w-4 h-4" />
                     </Button>
-                    {row.deliveryStatus === "sent" ? (
-                      <Button size="sm" variant="secondary" disabled>
-                        <CheckCircle2 className="w-4 h-4 mr-1" />
-                        Sent
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openPreview(row)}
-                        disabled={!row.canSend || sendEmails.isPending}
-                      >
-                        <Send className="w-4 h-4 mr-1" />
-                        Send
-                      </Button>
-                    )}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => openPreview(row)}
+                      disabled={!row.canSend || sendEmails.isPending}
+                    >
+                      <Send className="w-4 h-4 mr-1" />
+                      {row.deliveryStatus === "sent" ? "Send again" : "Send"}
+                    </Button>
                   </td>
                 </tr>
               ))}
@@ -454,12 +406,6 @@ function EmailsPage() {
                     <DeliveryStatus status={job.status} error={job.error} />
                   </td>
                   <td className="px-4 py-3 text-right whitespace-nowrap space-x-1">
-                    {job.status === "pending" && (
-                      <Button size="sm" variant="outline" onClick={() => markSent.mutate(job)}>
-                        <CheckCircle2 className="w-4 h-4 mr-1" />
-                        Mark sent
-                      </Button>
-                    )}
                     {job.status === "failed" && (
                       <Button size="sm" variant="ghost" onClick={() => retry.mutate(job)}>
                         <RefreshCw className="w-4 h-4" />
@@ -483,15 +429,52 @@ function EmailsPage() {
       <Dialog open={confirmBulkOpen} onOpenChange={setConfirmBulkOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Send all unsent emails?</DialogTitle>
+            <DialogTitle>Choose customers for bulk email</DialogTitle>
           </DialogHeader>
           <div className="space-y-2 text-sm text-muted-foreground">
             <p>
-              This will send {sendableRows.length} customer email
-              {sendableRows.length === 1 ? "" : "s"} for the current Open Jobs upload.
+              {selectedBulkRows.length} of {sendableRows.length} ready customer
+              {sendableRows.length === 1 ? "" : "s"} selected for the current Open Jobs upload.
             </p>
-            <p>Customers already marked Sent for the current upload period will be skipped automatically.</p>
+            <p>Customers with sent email history are shown below but left unselected by default. Select them if you want to send again.</p>
             <div className="space-y-3 pt-2 text-foreground">
+              <div className="rounded-md border">
+                <label className="flex cursor-pointer items-center gap-3 border-b bg-muted/30 px-3 py-2.5 text-sm font-medium">
+                  <Checkbox
+                    checked={allBulkRecipientsSelected ? true : selectedBulkRows.length > 0 ? "indeterminate" : false}
+                    onCheckedChange={(checked) => setAllBulkRecipientsSelected(checked === true)}
+                  />
+                  Select all ready customers
+                </label>
+                <div className="max-h-52 divide-y overflow-y-auto">
+                  {sendableRows.map((row) => {
+                    const customerId = row.customer?.id;
+                    if (!customerId) return null;
+                    const selected = selectedBulkCustomerIds.includes(customerId);
+                    return (
+                      <label key={customerId} className="flex cursor-pointer items-center gap-3 px-3 py-2.5 hover:bg-muted/30">
+                        <Checkbox
+                          checked={selected}
+                          onCheckedChange={(checked) => setBulkRecipientSelected(customerId, checked === true)}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center gap-2 font-medium">
+                            <span className="truncate">{row.name}</span>
+                            {row.deliveryStatus === "sent" && (
+                              <span className="shrink-0 rounded-full bg-success/10 px-1.5 py-0.5 text-[10px] text-success">
+                                Sent
+                              </span>
+                            )}
+                          </span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {row.customer.email} · {row.jobs.length} open job{row.jobs.length === 1 ? "" : "s"}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
               <div className="space-y-1.5">
                 <Label htmlFor="bulk-subject">Subject</Label>
                 <Input
@@ -518,8 +501,8 @@ function EmailsPage() {
             <Button variant="outline" onClick={() => setConfirmBulkOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={bulkSend} disabled={sendEmails.isPending || sendableRows.length === 0}>
-              {sendEmails.isPending ? "Sending..." : "Send All"}
+            <Button onClick={bulkSend} disabled={sendEmails.isPending || selectedBulkRows.length === 0}>
+              {sendEmails.isPending ? "Sending..." : `Send ${selectedBulkRows.length} selected`}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -564,19 +547,19 @@ function EmailsPage() {
                   <table className="w-full text-xs">
                     <thead className="bg-muted/50">
                       <tr>
-                        <th className="text-left px-2 py-1">Job</th>
-                        <th className="text-left px-2 py-1">Address</th>
-                        <th className="text-left px-2 py-1">Status</th>
-                        <th className="text-left px-2 py-1">Age</th>
+                        <th className="text-left px-2 py-1">Job ID / Job Ref.</th>
+                        <th className="text-left px-2 py-1">Purchase Order # / Customer Job#</th>
+                        <th className="text-left px-2 py-1">Zone</th>
+                        <th className="text-left px-2 py-1">Job Address/City</th>
                       </tr>
                     </thead>
                     <tbody>
                       {preview.jobs.slice(0, 25).map((job: any, index: number) => (
                         <tr key={index} className="border-t">
-                          <td className="px-2 py-1">{job.job_no ?? job.ticket_no}</td>
-                          <td className="px-2 py-1">{job.address ?? "-"}</td>
-                          <td className="px-2 py-1">{job.status ?? "-"}</td>
-                          <td className="px-2 py-1">{job.age_days ?? "-"}</td>
+                          <td className="px-2 py-1">{openJobDetailValue(job, "job_id_job_ref", job.job_no) ?? "-"}</td>
+                          <td className="px-2 py-1">{openJobDetailValue(job, "purchase_order_customer_job_lines", openJobDetailValue(job, "purchase_order_customer_job", job.ticket_no)) ?? "-"}</td>
+                          <td className="px-2 py-1">{openJobDetailValue(job, "zone", job.status) ?? "-"}</td>
+                          <td className="px-2 py-1">{openJobDetailValue(job, "job_address_city_lines", openJobDetailValue(job, "job_address_city", job.address)) ?? "-"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -615,7 +598,7 @@ function EmailsPage() {
 }
 
 function subjectFor(name: string, week: string) {
-  return `Open Jobs Report - ${name}`;
+  return `Open Jobs Report - ${name} - Week of ${formatWeekLabel(week)}`;
 }
 
 function defaultMessageFor(name: string, week: string, jobCount: number) {
@@ -633,7 +616,11 @@ function cleanComposerText(value?: string) {
 }
 
 function attachmentFor(name: string, week: string) {
-  return `${name.replace(/[^A-Za-z0-9]+/g, "_")}-open-jobs-${week}.csv`;
+  return `${name.replace(/[^A-Za-z0-9]+/g, "_")}-open-jobs-${week}.xlsx`;
+}
+
+function formatWeekLabel(iso: string) {
+  return formatDateOnly(iso);
 }
 
 function DeliveryStatus({ status, error }: { status: string; error?: string | null }) {
@@ -678,6 +665,17 @@ function DeliveryStatus({ status, error }: { status: string; error?: string | nu
 
 function isSentEmailJob(job: any) {
   return job?.status === "sent" || !!job?.sent_at;
+}
+
+function normalizedEmail(value: unknown) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function isEmailJobForCurrentRecipient(job: any, customer: any | null) {
+  if (!customer?.id) return false;
+  const currentEmail = normalizedEmail(customer.email);
+  if (!currentEmail) return false;
+  return job?.customer_id === customer.id && normalizedEmail(job?.customer_email) === currentEmail;
 }
 
 function SnapCard({ label, value, accent }: { label: string; value: number; accent: string }) {

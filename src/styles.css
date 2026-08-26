@@ -93,7 +93,10 @@
 
 @layer base {
   * { border-color: var(--color-border); }
-  html, body { font-family: var(--font-sans); }
+  html, body {
+    font-family: var(--font-sans);
+    overflow-x: hidden;
+  }
   body {
     background: linear-gradient(180deg, oklch(0.985 0.004 260) 0%, oklch(0.97 0.008 250) 100%);
     color: var(--color-foreground);

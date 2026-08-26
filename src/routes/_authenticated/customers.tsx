@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, Mail, X } from "lucide-react";
+import { Plus, Pencil, Trash2, X } from "lucide-react";
 import { canEdit, useAuth } from "@/lib/useAuth";
 import { z } from "zod";
 import { useDemoMode } from "@/lib/demoMode";
@@ -40,7 +40,6 @@ const empty: FormState = { key: "", name: "", email: "", cc: [], lastEmail: "", 
 function CustomersPage() {
   const qc = useQueryClient();
   const auth = useAuth();
-  const { user } = auth;
   const canManageCustomers = canEdit(auth, "customers");
   const demoMode = useDemoMode();
   const [open, setOpen] = useState(false);
@@ -160,22 +159,6 @@ function CustomersPage() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["customers"] }); qc.invalidateQueries({ queryKey: ["customers_from_open_jobs"] }); },
   });
 
-  const testEmail = useMutation({
-    mutationFn: async (c: any) => {
-      if (!c.email) throw new Error("No primary email");
-      if (!user) throw new Error("Not signed in");
-      const { error } = await supabase.from("email_jobs").insert({
-        batch_id: crypto.randomUUID(), week_start: new Date().toISOString().slice(0, 10),
-        customer_id: c.id, customer_name: c.name, customer_email: c.email, cc_emails: c.cc_emails,
-        subject: `[TEST] Open Jobs Report — ${c.name}`, attachment_name: `${c.name}-test.xlsx`,
-        job_count: 0, status: "pending", created_by: user.id,
-      });
-      if (error) throw error;
-    },
-    onSuccess: () => toast.success("Test email queued"),
-    onError: (e: any) => toast.error(e.message),
-  });
-
   function edit(c: any) {
     setEditing(c);
     setForm({
@@ -291,9 +274,6 @@ function CustomersPage() {
                   <Switch checked={!!c.enabled} onCheckedChange={(v) => toggleEnabled.mutate({ customer: c, enabled: v })} disabled={!canManageCustomers} />
                 </td>
                 <td className="px-6 py-3 text-right space-x-1 whitespace-nowrap">
-                  <Button size="sm" variant="ghost" onClick={() => testEmail.mutate(c)} disabled={!c.email || c.derived_from_open_jobs} title="Queue test email">
-                    <Mail className="w-4 h-4" />
-                  </Button>
                   {canManageCustomers && <Button size="sm" variant="ghost" onClick={() => edit(c)}><Pencil className="w-4 h-4" /></Button>}
                   {canManageCustomers && !c.derived_from_open_jobs && <>
                     <Button size="sm" variant="ghost" onClick={() => confirm("Delete this customer?") && del.mutate(c.id)}><Trash2 className="w-4 h-4 text-destructive" /></Button>

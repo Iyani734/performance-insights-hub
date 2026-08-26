@@ -12,7 +12,7 @@ export const REPORT_KINDS: { value: ReportKind; label: string; hint: string }[] 
   {
     value: "active_review_final",
     label: "Active / Review / Final",
-    hint: "File name must include active, review, and final. No date range is needed.",
+    hint: "File name must include active, review, and final. This is always a timeless current snapshot.",
   },
   {
     value: "ticket_qc",
@@ -27,12 +27,12 @@ export const REPORT_KINDS: { value: ReportKind; label: string; hint: string }[] 
   {
     value: "total_cycle_time",
     label: "Invoice Cycle Time",
-    hint: "File name must include invoice cycle time or total cycle time. No date range is needed.",
+    hint: "File name must include invoice cycle time or total cycle time. This is always a timeless current snapshot.",
   },
   {
     value: "open_jobs",
     label: "Open Jobs",
-    hint: "File name must include open jobs. No date range is needed.",
+    hint: "File name must include open jobs. Use Timeless/current for this week, or choose a past date range.",
   },
 ];
 

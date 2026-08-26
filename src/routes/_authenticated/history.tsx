@@ -1,3 +1,20 @@
+import { createFileRoute, redirect } from "@tanstack/react-router";
+
+export const Route = createFileRoute("/_authenticated/history")({
+  beforeLoad: () => {
+    throw redirect({ to: "/analytics" });
+  },
+  component: HistoryRedirect,
+});
+
+function HistoryRedirect() {
+  return null;
+}
+
+/*
+Legacy History page retained for possible future reuse.
+History was removed from navigation, and the Compare Weeks card now lives on Analytics.
+
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -22,9 +39,8 @@ import { reportKindLabel } from "@/lib/reportTypes";
 
 export const Route = createFileRoute("/_authenticated/history")({ component: HistoryPage });
 
-function monthOf(iso: string) { return iso.slice(0, 7); }
-function monthLabel(m: string) {
-  return new Date(m + "-01T00:00:00Z").toLocaleDateString(undefined, { month: "long", year: "numeric" });
+function weekLabel(weekStart: string) {
+  return formatWeek(weekStart).replace(/, \d{4}/, "");
 }
 
 const SERIES_COLORS = [
@@ -85,7 +101,7 @@ function HistoryPage() {
   const chartData = useMemo(() => {
     const weeksAsc = [...filteredWeeks].reverse();
     return weeksAsc.map(w => {
-      const row: any = { week: formatWeek(w).replace(/,.*/, "") };
+      const row: any = { week: weekLabel(w) };
       for (const t of targets) {
         const v = (valuesQ.data ?? []).find((x: any) => x.week_start === w && x.kpi_key === t.kpi_key);
         row[t.label] = v ? Number(v.actual) : null;
@@ -119,31 +135,13 @@ function HistoryPage() {
   const [weekB, setWeekB] = useState<string | null>(null);
   const wA = weekA ?? allWeeks[0] ?? null;
   const wB = weekB ?? allWeeks[1] ?? null;
+  const [summaryWeek, setSummaryWeek] = useState<string | null>(null);
+  const selectedSummaryWeek = summaryWeek ?? allWeeks[0] ?? null;
 
   function valueAt(week: string | null, key: string): number | null {
     if (!week) return null;
     const v = (valuesQ.data ?? []).find((x: any) => x.week_start === week && x.kpi_key === key);
     return v ? Number(v.actual) : null;
-  }
-
-  const months = useMemo(() => {
-    const set = new Set<string>();
-    for (const w of allWeeks) set.add(monthOf(w));
-    return Array.from(set).sort().reverse();
-  }, [allWeeks]);
-
-  const [monthA, setMonthA] = useState<string | null>(null);
-  const [monthB, setMonthB] = useState<string | null>(null);
-  const mA = monthA ?? months[0] ?? null;
-  const mB = monthB ?? months[1] ?? null;
-
-  function monthAvg(month: string | null, key: string): number | null {
-    if (!month) return null;
-    const vals = (valuesQ.data ?? [])
-      .filter((v: any) => v.kpi_key === key && monthOf(v.week_start) === month && v.actual != null)
-      .map((v: any) => Number(v.actual));
-    if (!vals.length) return null;
-    return vals.reduce((a: number, b: number) => a + b, 0) / vals.length;
   }
 
   async function downloadUpload(u: any) {
@@ -170,7 +168,7 @@ function HistoryPage() {
         <TabsList>
           <TabsTrigger value="kpi">KPI History</TabsTrigger>
           <TabsTrigger value="compare">Compare Weeks</TabsTrigger>
-          <TabsTrigger value="monthly">Monthly</TabsTrigger>
+          <TabsTrigger value="weekly">Weekly Summary</TabsTrigger>
           <TabsTrigger value="uploads">Uploads</TabsTrigger>
         </TabsList>
 
@@ -313,41 +311,38 @@ function HistoryPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="monthly" className="mt-4">
+        <TabsContent value="weekly" className="mt-4">
           <Card>
             <div className="px-6 py-4 border-b flex flex-wrap items-center gap-3">
-              <h2 className="font-display text-lg font-semibold mr-auto">Compare months</h2>
-              <Select value={mA ?? ""} onValueChange={setMonthA}>
-                <SelectTrigger className="w-[200px]"><SelectValue placeholder="Month A" /></SelectTrigger>
-                <SelectContent>{months.map(m => <SelectItem key={m} value={m}>{monthLabel(m)}</SelectItem>)}</SelectContent>
-              </Select>
-              <span className="text-muted-foreground">vs.</span>
-              <Select value={mB ?? ""} onValueChange={setMonthB}>
-                <SelectTrigger className="w-[200px]"><SelectValue placeholder="Month B" /></SelectTrigger>
-                <SelectContent>{months.map(m => <SelectItem key={m} value={m}>{monthLabel(m)}</SelectItem>)}</SelectContent>
+              <div className="mr-auto">
+                <h2 className="font-display text-lg font-semibold">Weekly KPI summary</h2>
+                <p className="text-xs text-muted-foreground">Review one uploaded week without rolling values into a monthly average.</p>
+              </div>
+              <Select value={selectedSummaryWeek ?? ""} onValueChange={setSummaryWeek}>
+                <SelectTrigger className="w-[220px]"><SelectValue placeholder="Select week" /></SelectTrigger>
+                <SelectContent>{allWeeks.map(w => <SelectItem key={w} value={w}>{formatWeek(w)}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
                   <tr>
-                    <th className="text-left px-6 py-3 font-medium">KPI (avg)</th>
-                    <th className="text-left px-6 py-3 font-medium">{mA ? monthLabel(mA) : "—"}</th>
-                    <th className="text-left px-6 py-3 font-medium">{mB ? monthLabel(mB) : "—"}</th>
-                    <th className="text-left px-6 py-3 font-medium">Δ</th>
+                    <th className="text-left px-6 py-3 font-medium">KPI</th>
+                    <th className="text-left px-6 py-3 font-medium">Target</th>
+                    <th className="text-left px-6 py-3 font-medium">{selectedSummaryWeek ? formatWeek(selectedSummaryWeek) : "Week"}</th>
+                    <th className="text-left px-6 py-3 font-medium">Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {targets.map(t => {
-                    const a = monthAvg(mA, t.kpi_key), b = monthAvg(mB, t.kpi_key);
-                    const d = deltaPct(a, b);
-                    const better = d == null ? null : (t.direction === "lower_is_better" ? d < 0 : d > 0);
+                    const actual = valueAt(selectedSummaryWeek, t.kpi_key);
+                    const status = computeStatus(actual, t);
                     return (
                       <tr key={t.id} className="border-t">
                         <td className="px-6 py-3 font-medium">{t.label}</td>
-                        <td className="px-6 py-3">{formatKpi(a, t)}</td>
-                        <td className="px-6 py-3 text-muted-foreground">{formatKpi(b, t)}</td>
-                        <td className={`px-6 py-3 ${d == null ? "text-muted-foreground" : better ? "text-success" : "text-destructive"}`}>{d == null ? "—" : `${Math.abs(d).toFixed(1)}%`}</td>
+                        <td className="px-6 py-3 text-muted-foreground">{t.target_display ?? "—"}</td>
+                        <td className="px-6 py-3 font-medium">{formatKpi(actual, t)}</td>
+                        <td className="px-6 py-3"><StatusPill status={status} /></td>
                       </tr>
                     );
                   })}
@@ -395,3 +390,4 @@ function HistoryPage() {
     </div>
   );
 }
+*/

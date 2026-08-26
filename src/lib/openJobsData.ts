@@ -1,6 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { isSeededDemoPayload, isSeededDemoUpload } from "@/lib/liveData";
-import { uniqueOpenJobs } from "@/lib/openJobs";
+import { sortOpenJobsBySourceOrder, uniqueOpenJobs } from "@/lib/openJobs";
 import { isOpenJobsUpload } from "@/lib/reportTypes";
 import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
 
@@ -40,12 +40,12 @@ export async function fetchLatestOpenJobsRows() {
       .from("open_jobs")
       .select("*")
       .eq("upload_id", latestUpload.id)
-      .order("customer_name")
+      .order("created_at", { ascending: true })
       .range(from, to),
   );
 
   return {
     upload: latestUpload,
-    rows: uniqueOpenJobs(data.filter((row) => !isSeededDemoPayload(row.details))),
+    rows: sortOpenJobsBySourceOrder(uniqueOpenJobs(data.filter((row) => !isSeededDemoPayload(row.details)))),
   };
 }

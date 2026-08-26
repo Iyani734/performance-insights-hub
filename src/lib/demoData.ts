@@ -657,7 +657,7 @@ export function demoOpenJobs(week = DEMO_CURRENT_WEEK) {
       ticket_no: `TCK-202622-${String(customerIndex * 20 + jobIndex + 1).padStart(4, "0")}`,
       order_type: ["Repair", "Inspection", "Preventive Maintenance", "Install"][jobIndex % 4],
       last_activity: "Customer update prepared for the weekly report",
-      details: { demo: true, priority: jobIndex === 0 ? "high" : "normal" },
+      details: { demo: true, priority: jobIndex === 0 ? "high" : "normal", excel_row: customerIndex * 5 + jobIndex + 2 },
       created_at: `${week}T${String(12 + jobIndex).padStart(2, "0")}:20:00.000Z`,
       address: `${100 + customerIndex * 25} Demo Service Road, Suite ${100 + jobIndex * 10}`,
       status: statuses[jobIndex % statuses.length],
