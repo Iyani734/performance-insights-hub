@@ -85,18 +85,16 @@ function isExcelFile(file: File) {
 }
 
 function requiresPairedFiles(kind: ReportKind) {
-  return kind === "ticket_qc" || kind === "ticket_quality";
+  return kind === "ticket_qc";
 }
 
 function pairedFileKey(kind: ReportKind, file: File) {
   if (kind === "ticket_qc") return identifyTicketQcStageFromFileName(file.name);
-  if (kind === "ticket_quality") return identifyTicketQualitySourceFromFileName(file.name);
   return null;
 }
 
 function requiredPairKeys(kind: ReportKind) {
   if (kind === "ticket_qc") return ["review", "final"];
-  if (kind === "ticket_quality") return ["errors", "total"];
   return [];
 }
 
@@ -122,11 +120,7 @@ function missingPairedFileMessage(files: File[], kind: ReportKind) {
     return `You can upload this now. Add ${missing.join(" and ")} later before the KPI calculates.`;
   }
 
-  const missing = [
-    !selected.has("errors") ? "Ticket Quality Error" : null,
-    !selected.has("total") ? "TCR Total" : null,
-  ].filter(Boolean);
-  return `You can upload this now. Add ${missing.join(" and ")} later before the KPI calculates.`;
+  return null;
 }
 
 function fileIdentity(file: File) {
@@ -149,7 +143,7 @@ function mergeSelectedFiles(kind: ReportKind, current: File[], incoming: File[])
 function validateUploadSelection(files: File[], kind: ReportKind) {
   if (!files.length) throw new Error("Choose an Excel file before uploading.");
   if (files.some((file) => !isExcelFile(file))) throw new Error("Upload .xlsx or .xls files only.");
-  if (kind !== "ticket_qc" && kind !== "ticket_quality" && files.length > 1) {
+  if (kind !== "ticket_qc" && files.length > 1) {
     throw new Error(`${reportKindLabel(kind)} accepts one file per upload.`);
   }
 
@@ -158,7 +152,7 @@ function validateUploadSelection(files: File[], kind: ReportKind) {
     const inferredKind = identifyReportKindFromFileName(file.name);
     if (!inferredKind) {
       throw new Error(
-    "The file name must include active review final, TicketQC REVIEW, TicketQC FINAL, ticket quality, TCR total, invoice cycle time, total cycle time, or open jobs.",
+    "The file name must include active review final, TicketQC REVIEW, TicketQC FINAL, ticket quality error, invoice cycle time, total cycle time, or open jobs.",
       );
     }
     if (inferredKind !== kind) {
@@ -179,10 +173,7 @@ function validateUploadSelection(files: File[], kind: ReportKind) {
     if (kind === "ticket_quality") {
       const source = identifyTicketQualitySourceFromFileName(file.name);
       if (!source) {
-        throw new Error("Ticket Quality file names must include Ticket Quality or TCR Total.");
-      }
-      if (stages.has(source)) {
-        throw new Error("Upload only one Ticket Quality Error file and one TCR Total file at a time.");
+        throw new Error("Ticket Quality uploads must use the Ticket Quality Error file.");
       }
       stages.add(source);
     }
@@ -250,11 +241,10 @@ function buildDemoUploadMetrics(
     };
   }
   if (kind === "ticket_quality") {
-    const source = identifyTicketQualitySourceFromFileName(fileName);
     return {
-      qualityIssues: source === "errors" ? rows.length : undefined,
-      qualityTotalTickets: source === "total" ? rows.length : undefined,
-      ticketQuality: null,
+      qualityIssues: rows.length,
+      qualityTotalTickets: 0,
+      ticketQuality: rows.length,
     };
   }
   return {
@@ -277,6 +267,7 @@ function UploadsPage() {
   const { user, isSuperAdmin, loading: authLoading } = auth;
   const demoMode = useDemoMode();
   const canDeleteUploads = isSuperAdmin || canEdit(auth, "uploads");
+  const authDisplayName = auth.displayName ?? user?.email ?? "You";
   const currentWorkingRange = workingWeekRangeForDate();
   const [kind, setKind] = useState<ReportKind>("active_review_final");
   const [uploadTiming, setUploadTiming] = useState<UploadTiming>("timeless");
@@ -287,6 +278,7 @@ function UploadsPage() {
   const [demoUploadedRows, setDemoUploadedRows] =
     useState<DemoUploadRecord[]>(loadDemoLocalUploads);
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
+  const [adminDeleteTarget, setAdminDeleteTarget] = useState<any | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
   const [uploadStage, setUploadStage] = useState("");
   const isSnapshotUpload = isSnapshotReportKind(kind);
@@ -346,8 +338,33 @@ function UploadsPage() {
     const m = new Map<string, { name: string; email: string }>();
     for (const p of (profilesQ.data ?? []) as any[])
       m.set(p.id, { name: p.full_name ?? p.email ?? "Unknown", email: p.email ?? "" });
+    if (user?.id) {
+      const existing = m.get(user.id);
+      m.set(user.id, {
+        name: existing?.name && existing.name !== "Unknown" ? existing.name : authDisplayName,
+        email: existing?.email ?? user.email ?? "",
+      });
+    }
     return m;
-  }, [profilesQ.data]);
+  }, [authDisplayName, profilesQ.data, user?.email, user?.id]);
+
+  async function ensureCurrentUserProfile() {
+    if (!user || demoMode) return;
+    const metaName =
+      (user.user_metadata as any)?.full_name ??
+      (user.user_metadata as any)?.nickname ??
+      null;
+    const fullName = auth.displayName ?? metaName ?? user.email ?? null;
+    const { error } = await supabase.from("profiles").upsert(
+      {
+        id: user.id,
+        email: user.email ?? null,
+        full_name: fullName,
+      } as any,
+      { onConflict: "id" },
+    );
+    if (error) console.warn("[uploads] Could not refresh uploader profile", error);
+  }
 
   const pendingByUpload = useMemo(() => {
     const m = new Map<string, any>();
@@ -408,6 +425,7 @@ function UploadsPage() {
         }
 
         if (!user) throw new Error("Sign in to upload files.");
+        await ensureCurrentUserProfile();
         const filePath = `${uploadBucket}/${Date.now()}-${selectedFile.name}`;
         setUploadStage(`Uploading ${selectedFile.name}...`);
         const storageUpload = supabase.storage
@@ -536,8 +554,7 @@ function UploadsPage() {
             const { computeAutoKpisForRange } = await import("@/lib/kpi");
             const auto = await computeAutoKpisForRange(uploadEffectiveFrom, uploadEffectiveTo);
             ticketQcWaiting =
-              (kind === "ticket_qc" && auto.review_to_final_edit == null) ||
-              (kind === "ticket_quality" && auto.ticket_quality == null);
+              kind === "ticket_qc" && auto.review_to_final_edit == null;
             const upserts = [
               { kpi_key: "review_to_final_edit", actual: auto.review_to_final_edit },
               { kpi_key: "ticket_quality", actual: auto.ticket_quality },
@@ -660,7 +677,7 @@ function UploadsPage() {
       for (const warning of Array.from(new Set(customerSyncWarnings))) toast.warning(warning);
       for (const warning of Array.from(new Set(replacementWarnings))) toast.warning(warning);
       if (ticketQcWaiting) {
-        toast.warning("Upload imported. The KPI will calculate after both required source files exist for this date range.");
+        toast.warning("Upload imported. The Ticket QC KPI will calculate after both REVIEW and FINAL files exist for this date range.");
       }
       setUploadStage("");
       setFiles([]);
@@ -701,6 +718,7 @@ function UploadsPage() {
     },
     onSuccess: () => {
       toast.success("Upload deleted");
+      setAdminDeleteTarget(null);
       qc.invalidateQueries();
     },
     onError: (e: any) => toast.error(e.message),
@@ -843,7 +861,7 @@ function UploadsPage() {
               key={fileInputKey}
               type="file"
               accept=".xlsx,.xls"
-              multiple={kind === "ticket_qc" || kind === "ticket_quality"}
+              multiple={kind === "ticket_qc"}
               onChange={(e) => {
                 const incoming = Array.from(e.target.files ?? []);
                 setFiles((current) => mergeSelectedFiles(kind, current, incoming));
@@ -859,7 +877,7 @@ function UploadsPage() {
               {kind === "ticket_qc"
                 ? " Ticket QC can accept TicketQC REVIEW and TicketQC FINAL together, or one at a time."
                 : kind === "ticket_quality"
-                  ? " Ticket Quality can accept Ticket Quality Error and TCR Total together, or one at a time."
+                  ? " Ticket Quality now uses only the Ticket Quality Error file; TCR Total is no longer required."
                 : ""}
             </p>
             {invalidUploadRange && <p className="text-xs text-destructive">Select a valid date range.</p>}
@@ -953,36 +971,37 @@ function UploadsPage() {
         </Card>
       )}
 
-      <Card>
+      <Card className="flex max-h-[calc(100dvh-8rem)] min-h-[260px] flex-col overflow-hidden">
         <div className="px-6 py-4 border-b flex items-center justify-between">
           <h2 className="font-display text-lg font-semibold">Upload history</h2>
           <span className="text-xs text-muted-foreground">{uploads.length} retained uploads</span>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+          <table className="w-full table-fixed text-sm">
             <thead className="bg-muted/70 text-xs uppercase text-muted-foreground sticky top-0 backdrop-blur z-10">
               <tr>
-                <th className="text-left px-4 py-3 font-medium">When</th>
-                <th className="text-left px-4 py-3 font-medium">Uploaded by</th>
-                <th className="text-left px-4 py-3 font-medium">Type</th>
-                <th className="text-left px-4 py-3 font-medium">Applies to</th>
-                <th className="text-left px-4 py-3 font-medium">File</th>
-                <th className="text-right px-4 py-3 font-medium">Imported</th>
-                <th className="text-right px-4 py-3 font-medium">Errors</th>
-                <th className="text-left px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3" />
+                <th className="w-[15%] text-left px-3 py-3 font-medium">When</th>
+                <th className="w-[12%] text-left px-3 py-3 font-medium">Uploaded by</th>
+                <th className="w-[12%] text-left px-3 py-3 font-medium">Type</th>
+                <th className="w-[17%] text-left px-3 py-3 font-medium">Applies to</th>
+                <th className="w-[15%] text-left px-3 py-3 font-medium">File</th>
+                <th className="w-[8%] text-right px-3 py-3 font-medium">Imported</th>
+                <th className="w-[7%] text-right px-3 py-3 font-medium">Errors</th>
+                <th className="w-[7%] text-left px-3 py-3 font-medium">Status</th>
+                <th className="w-[7%] px-2 py-3" />
               </tr>
             </thead>
             <tbody>
               {uploads.map((u: any, index: number) => {
                 const uploader = u.uploaded_by ? profileMap.get(u.uploaded_by) : null;
+                const isMine = user?.id === u.uploaded_by;
                 const uploaderName =
                   uploader?.name ??
+                  (isMine ? authDisplayName : null) ??
                   (u.file_name?.startsWith("demo-")
                     ? DEMO_UPLOADERS[index % DEMO_UPLOADERS.length]
                     : "Unknown");
                 const pending = pendingByUpload.get(u.id);
-                const isMine = user?.id === u.uploaded_by;
                 const uploadStatus =
                   u.status === "processing" &&
                   Date.now() - new Date(u.created_at).getTime() > 5 * 60 * 1000
@@ -990,36 +1009,42 @@ function UploadsPage() {
                     : u.status;
                 return (
                   <tr key={u.id} className="border-t hover:bg-muted/30">
-                    <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
-                      {new Date(u.created_at).toLocaleString()}
+                    <td className="px-3 py-2.5 text-muted-foreground">
+                      <span className="block truncate" title={new Date(u.created_at).toLocaleString()}>
+                        {new Date(u.created_at).toLocaleString()}
+                      </span>
                     </td>
-                    <td className="px-4 py-2.5 whitespace-nowrap">
-                      <span className="inline-flex items-center gap-1.5">
+                    <td className="px-3 py-2.5">
+                      <span className="inline-flex max-w-full items-center gap-1.5">
                         <span className="w-6 h-6 rounded-full bg-primary/15 text-primary flex items-center justify-center text-[10px] font-semibold">
                           {uploaderName.slice(0, 1).toUpperCase()}
                         </span>
-                        <span className="font-medium">{uploaderName}</span>
+                        <span className="truncate font-medium">{uploaderName}</span>
                       </span>
                     </td>
-                    <td className="px-4 py-2.5">
-                      <span className="inline-flex items-center gap-1.5">
+                    <td className="px-3 py-2.5">
+                      <span className="inline-flex max-w-full items-center gap-1.5">
                         <FileSpreadsheet className="w-4 h-4 text-primary" />
-                        {reportKindLabel(u.kind)}
+                        <span className="truncate" title={reportKindLabel(u.kind)}>{reportKindLabel(u.kind)}</span>
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 whitespace-nowrap">
-                      {uploadAppliesTo(u)}
+                    <td className="px-3 py-2.5">
+                      <span className="block truncate" title={uploadAppliesTo(u)}>
+                        {uploadAppliesTo(u)}
+                      </span>
                     </td>
-                    <td className="px-4 py-2.5 text-muted-foreground max-w-[220px] truncate">
-                      {u.file_name}
+                    <td className="px-3 py-2.5 text-muted-foreground">
+                      <span className="block truncate" title={u.file_name}>
+                        {u.file_name}
+                      </span>
                     </td>
-                    <td className="px-4 py-2.5 text-right font-medium">{u.row_count ?? 0}</td>
+                    <td className="px-3 py-2.5 text-right font-medium">{u.row_count ?? 0}</td>
                     <td
-                      className={`px-4 py-2.5 text-right ${(u.errors_count ?? 0) > 0 ? "text-destructive font-medium" : "text-muted-foreground"}`}
+                      className={`px-3 py-2.5 text-right ${(u.errors_count ?? 0) > 0 ? "text-destructive font-medium" : "text-muted-foreground"}`}
                     >
                       {u.errors_count ?? 0}
                     </td>
-                    <td className="px-4 py-2.5">
+                    <td className="px-3 py-2.5">
                       {uploadStatus === "success" && (
                         <span className="inline-flex items-center gap-1 text-success text-xs font-medium">
                           <CheckCircle2 className="w-3.5 h-3.5" />
@@ -1042,11 +1067,12 @@ function UploadsPage() {
                         <span className="text-muted-foreground text-xs">Processing…</span>
                       )}
                     </td>
-                    <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                    <td className="px-2 py-2.5 text-right whitespace-nowrap">
                       {u.file_path && (
                         <Button
                           size="sm"
                           variant="ghost"
+                          className="h-8 w-8 p-0"
                           onClick={() => downloadFile(u)}
                           title="Download"
                         >
@@ -1054,16 +1080,15 @@ function UploadsPage() {
                         </Button>
                       )}
                       {pending ? (
-                        <span className="text-xs text-warning font-medium ml-1">
-                          Deletion pending
+                        <span className="ml-1 text-xs font-medium text-warning" title="Deletion pending">
+                          Pending
                         </span>
                       ) : canDeleteUploads ? (
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={() =>
-                            confirm("Delete this upload and its data?") && adminDelete.mutate(u.id)
-                          }
+                          className="h-8 w-8 p-0"
+                          onClick={() => setAdminDeleteTarget(u)}
                           title="Delete upload"
                         >
                           <Trash2 className="w-4 h-4 text-destructive" />
@@ -1097,6 +1122,39 @@ function UploadsPage() {
           </table>
         </div>
       </Card>
+
+      <Dialog
+        open={!!adminDeleteTarget}
+        onOpenChange={(open) => {
+          if (!open) setAdminDeleteTarget(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete upload?</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 text-sm text-muted-foreground">
+            <p>
+              This will permanently delete{" "}
+              <span className="font-semibold text-foreground">{adminDeleteTarget?.file_name}</span>{" "}
+              and its imported data.
+            </p>
+            <p>This cannot be undone from the app.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAdminDeleteTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => adminDeleteTarget && adminDelete.mutate(adminDeleteTarget.id)}
+              disabled={adminDelete.isPending}
+            >
+              {adminDelete.isPending ? "Deleting…" : "Delete upload"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={!!deleteTarget}

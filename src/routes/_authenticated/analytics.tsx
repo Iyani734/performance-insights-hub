@@ -1,15 +1,17 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Area, AreaChart, Bar, BarChart, Legend } from "recharts";
+import { XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Area, AreaChart, Legend, Line, LineChart } from "recharts";
 import { computeAutoKpisForRange, computeStatus, formatKpi, formatWeek, normalizeKpiTarget, normalizeKpiTargets, type KpiTarget, type KpiStatus } from "@/lib/kpi";
 import { StatusPill } from "@/components/StatusPill";
 import { cn } from "@/lib/utils";
-import { TrendingUp, TrendingDown, Minus, BarChart3, Grid3x3, Sparkles } from "lucide-react";
-import { DateRangeSelect, type DateRange } from "@/components/DateRangeSelect";
+import { TrendingUp, TrendingDown, Minus, BarChart3, Grid3x3, Sparkles, CalendarDays } from "lucide-react";
 import { useDemoMode } from "@/lib/demoMode";
 import { addDays, DEMO_TARGETS, DEMO_WEEKS, demoAutoKpisForRange, demoKpiValues } from "@/lib/demoData";
 import { isSeededDemoPayload, isSeededDemoSource, isSeededDemoUpload } from "@/lib/liveData";
@@ -120,23 +122,46 @@ function workingWeekBucketFromIso(iso: string): WorkingWeekBucket {
   };
 }
 
-function buildWorkingWeekBuckets(dates: string[]) {
-  const buckets = new Map<string, WorkingWeekBucket>();
-  for (const date of dates) {
-    if (!date) continue;
-    const bucket = workingWeekBucketFromIso(date);
-    buckets.set(bucket.id, bucket);
-  }
-  return Array.from(buckets.values()).sort((a, b) => a.from.localeCompare(b.from));
+function monthLabel(monthKey: string) {
+  const [yearValue, monthValue] = monthKey.split("-").map(Number);
+  if (!Number.isFinite(yearValue) || !Number.isFinite(monthValue)) return monthKey;
+  return new Date(yearValue, monthValue - 1, 1).toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
 }
 
-function selectBucketsForRange(buckets: WorkingWeekBucket[], range: DateRange) {
-  if (range.preset === "all") return buckets;
-  if (range.preset === "custom" && range.from && range.to) {
-    return buckets.filter((bucket) => bucket.to >= range.from! && bucket.from <= range.to!);
+function currentMonthKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`;
+}
+
+function isValidMonthKey(monthKey: string) {
+  if (!/^\d{4}-\d{2}$/.test(monthKey)) return false;
+  const [yearValue, monthValue] = monthKey.split("-").map(Number);
+  return Number.isFinite(yearValue) && monthValue >= 1 && monthValue <= 12;
+}
+
+function clampMonthKey(monthKey: string) {
+  const current = currentMonthKey();
+  if (!isValidMonthKey(monthKey)) return current;
+  return monthKey > current ? current : monthKey;
+}
+
+function buildWorkingWeekBucketsForMonth(monthKey: string): WorkingWeekBucket[] {
+  const selectedMonth = clampMonthKey(monthKey);
+  const [yearValue, monthValue] = selectedMonth.split("-").map(Number);
+  const monthIndex = monthValue - 1;
+  const firstDay = new Date(yearValue, monthIndex, 1);
+  const lastDay = new Date(yearValue, monthIndex + 1, 0);
+  const firstFriday = firstFridayOnOrAfter(firstDay);
+  const buckets: WorkingWeekBucket[] = [];
+
+  for (const day = new Date(firstFriday); day <= lastDay; day.setDate(day.getDate() + 7)) {
+    buckets.push(workingWeekBucketFromIso(isoFromLocalDate(day)));
   }
-  const n = Number(range.preset);
-  return Number.isFinite(n) ? buckets.slice(-n) : buckets;
+
+  return buckets;
 }
 
 function bucketRangeLabel(bucket: WorkingWeekBucket | undefined) {
@@ -151,6 +176,18 @@ function formatHeatmapValue(actual: number | null | undefined, target: KpiTarget
   if (normalizedTarget.unit === "%") return `${value.toFixed(1)}%`;
   if (Number.isInteger(value)) return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
   return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+}
+
+function numericOrNull(value: unknown) {
+  if (value == null) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function autoMetricValue(auto: any, kpiKey: string) {
+  if (!auto) return null;
+  if (kpiKey === "quality_issues") return numericOrNull(auto.totals?.quality_issues);
+  return numericOrNull(auto[kpiKey]);
 }
 
 function insightChangeSummary(target: KpiTarget, first: number, last: number) {
@@ -173,10 +210,7 @@ function insightChangeSummary(target: KpiTarget, first: number, last: number) {
   };
 }
 
-function selectedRangeBoundsForAnalytics(range: DateRange, buckets: WorkingWeekBucket[]) {
-  if (range.preset === "custom" && range.from && range.to && range.from <= range.to) {
-    return { from: range.from, to: range.to };
-  }
+function selectedRangeBoundsForBuckets(buckets: WorkingWeekBucket[]) {
   if (!buckets.length) return null;
   return { from: buckets[0].from, to: buckets[buckets.length - 1].to };
 }
@@ -224,9 +258,10 @@ function demoTicketStatusRows(): TicketStatusRow[] {
 }
 
 function AnalyticsPage() {
-  const [range, setRange] = useState<DateRange>({ preset: "12" });
+  const [selectedMonthKey, setSelectedMonthKey] = useState(() => currentMonthKey());
   const [compareWeekA, setCompareWeekA] = useState<string | null>(null);
   const [compareWeekB, setCompareWeekB] = useState<string | null>(null);
+  const monthInputRef = useRef<HTMLInputElement | null>(null);
   const demoMode = useDemoMode();
 
   const targetsQ = useQuery({
@@ -282,13 +317,10 @@ function AnalyticsPage() {
   const rows = valuesQ.data ?? [];
   const ticketStatusRows = ticketStatusQ.data ?? [];
 
-  const workingWeekBuckets = useMemo(() => {
-    return selectBucketsForRange(buildWorkingWeekBuckets(rows.map(r => r.week_start)), range);
-  }, [rows, range]);
-  const selectedRangeBounds = useMemo(
-    () => selectedRangeBoundsForAnalytics(range, workingWeekBuckets),
-    [range, workingWeekBuckets],
-  );
+  const maxSelectableMonthKey = currentMonthKey();
+  const activeMonthKey = clampMonthKey(selectedMonthKey);
+  const workingWeekBuckets = useMemo(() => buildWorkingWeekBucketsForMonth(activeMonthKey), [activeMonthKey]);
+  const selectedRangeBounds = useMemo(() => selectedRangeBoundsForBuckets(workingWeekBuckets), [workingWeekBuckets]);
   const selectedRangeAutoQ = useQuery({
     queryKey: ["analytics_auto_selected_range", selectedRangeBounds, demoMode],
     queryFn: () => {
@@ -298,6 +330,19 @@ function AnalyticsPage() {
         : computeAutoKpisForRange(selectedRangeBounds.from, selectedRangeBounds.to);
     },
     enabled: !!selectedRangeBounds,
+  });
+  const weeklyAutoQ = useQuery({
+    queryKey: ["analytics_auto_week_buckets", activeMonthKey, demoMode],
+    queryFn: async () =>
+      Promise.all(
+        workingWeekBuckets.map(async (bucket) => ({
+          bucketId: bucket.id,
+          data: demoMode
+            ? demoAutoKpisForRange({ from: bucket.from, to: bucket.to })
+            : await computeAutoKpisForRange(bucket.from, bucket.to),
+        })),
+      ),
+    enabled: workingWeekBuckets.length > 0,
   });
   const weeks = useMemo(() => workingWeekBuckets.map((bucket) => bucket.id), [workingWeekBuckets]);
   const bucketById = useMemo(() => new Map(workingWeekBuckets.map((bucket) => [bucket.id, bucket])), [workingWeekBuckets]);
@@ -319,12 +364,21 @@ function AnalyticsPage() {
     for (const [kpiKey, buckets] of latestByKpiAndBucket) {
       m.set(kpiKey, new Map(Array.from(buckets.entries()).map(([bucketId, value]) => [bucketId, value.actual])));
     }
+
+    for (const target of targets.filter((target) => target.auto)) {
+      const targetBuckets = m.get(target.kpi_key) ?? new Map<string, number | null>();
+      for (const weeklyAuto of weeklyAutoQ.data ?? []) {
+        const actual = autoMetricValue(weeklyAuto.data, target.kpi_key);
+        if (actual != null) targetBuckets.set(weeklyAuto.bucketId, actual);
+      }
+      m.set(target.kpi_key, targetBuckets);
+    }
+
     return m;
-  }, [rows, weeks]);
+  }, [rows, targets, weeklyAutoQ.data, weeks]);
 
   const statusChartData = useMemo(() => {
-    const statusBuckets = selectBucketsForRange(buildWorkingWeekBuckets(ticketStatusRows.map((row) => row.week_start)), range);
-    const selectedStatusBuckets = new Set(statusBuckets.map((bucket) => bucket.id));
+    const selectedStatusBuckets = new Set(workingWeekBuckets.map((bucket) => bucket.id));
     const latestByBucket = new Map<string, { date: string; row: TicketStatusRow }>();
 
     for (const row of ticketStatusRows) {
@@ -336,19 +390,23 @@ function AnalyticsPage() {
       }
     }
 
-    return statusBuckets
-      .map((bucket) => {
-        const row = latestByBucket.get(bucket.id)?.row;
-        return {
-          week: bucket.label,
-          period: bucketRangeLabel(bucket),
-          active: row?.active ?? 0,
-          review: row?.review ?? 0,
-          finalEdit: row?.finalEdit ?? 0,
-        };
-      })
-      .filter((row) => row.active > 0 || row.review > 0 || row.finalEdit > 0);
-  }, [ticketStatusRows, range]);
+    return workingWeekBuckets.map((bucket) => {
+      const row = latestByBucket.get(bucket.id)?.row;
+      return {
+        week: bucket.label,
+        period: bucketRangeLabel(bucket),
+        hasData: !!row,
+        active: row?.active ?? null,
+        review: row?.review ?? null,
+        finalEdit: row?.finalEdit ?? null,
+      };
+    });
+  }, [ticketStatusRows, workingWeekBuckets]);
+  const latestStatusSnapshot = [...statusChartData].reverse().find((row) => row.hasData) ?? null;
+  const latestStatusTotal =
+    (latestStatusSnapshot?.active ?? 0) +
+    (latestStatusSnapshot?.review ?? 0) +
+    (latestStatusSnapshot?.finalEdit ?? 0);
 
   const compareOptions = useMemo(() => [...workingWeekBuckets].reverse(), [workingWeekBuckets]);
   const compareA = weeks.includes(compareWeekA ?? "") ? compareWeekA : weeks[weeks.length - 1] ?? null;
@@ -359,9 +417,26 @@ function AnalyticsPage() {
     return byKpi.get(key)?.get(bucketId) ?? null;
   }
 
-  const loading = targetsQ.isLoading || valuesQ.isLoading || ticketStatusQ.isLoading || selectedRangeAutoQ.isLoading;
+  const loading = targetsQ.isLoading || valuesQ.isLoading || ticketStatusQ.isLoading || selectedRangeAutoQ.isLoading || weeklyAutoQ.isLoading;
   const empty = !loading && rows.length === 0 && ticketStatusRows.length === 0;
   const selectedRangeTicketQuality = selectedRangeAutoQ.data?.ticket_quality ?? null;
+  const activeMonthLabel = monthLabel(activeMonthKey);
+  const selectedWeekLabel = workingWeekBuckets.length
+    ? `${bucketRangeLabel(workingWeekBuckets[0])} through ${bucketRangeLabel(workingWeekBuckets[workingWeekBuckets.length - 1])}`
+    : "No working weeks selected";
+
+  function openMonthPicker() {
+    const input = monthInputRef.current;
+    if (!input) return;
+    if (typeof input.showPicker === "function") input.showPicker();
+    else input.focus();
+  }
+
+  function handleMonthChange(monthKey: string) {
+    setSelectedMonthKey(clampMonthKey(monthKey));
+    setCompareWeekA(null);
+    setCompareWeekB(null);
+  }
 
   // Insights
   const insights = useMemo(() => {
@@ -408,7 +483,40 @@ function AnalyticsPage() {
           <h1 className="font-display text-3xl font-semibold">Operations Analytics</h1>
           <p className="text-sm text-muted-foreground mt-1">Per-KPI trends, heatmap and smart insights grouped into Monday-Friday working weeks, for example Aug Week 1 through Aug Week 4.</p>
         </div>
-        <DateRangeSelect value={range} onChange={setRange} />
+        <div className="w-full rounded-xl border bg-card p-3 shadow-sm sm:w-auto sm:min-w-[340px]">
+          <Label htmlFor="analytics-month" className="flex items-center gap-2 text-sm font-semibold">
+            <CalendarDays className="h-4 w-4 text-primary" />
+            Analytics month
+          </Label>
+          <div className="relative mt-2">
+            <Input
+              ref={monthInputRef}
+              id="analytics-month"
+              type="month"
+              value={activeMonthKey}
+              max={maxSelectableMonthKey}
+              onClick={openMonthPicker}
+              onChange={(event) => handleMonthChange(event.target.value)}
+              className="h-10 w-full cursor-pointer pr-10 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:h-full [&::-webkit-calendar-picker-indicator]:w-full [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              onClick={openMonthPicker}
+              aria-label="Open month picker"
+            >
+              <CalendarDays className="h-4 w-4" />
+            </Button>
+          </div>
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            Showing {activeMonthLabel} · {selectedWeekLabel}
+          </p>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Select any current or past month. Future months are disabled.
+          </p>
+        </div>
       </header>
 
       {loading && (
@@ -513,37 +621,6 @@ function AnalyticsPage() {
                   </tbody>
                 </table>
               </div>
-            </Card>
-          )}
-
-          {/* Ticket status snapshot */}
-          {statusChartData.length > 0 && (
-            <Card className="p-6">
-              <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
-                <div>
-                  <h2 className="font-display text-base font-semibold flex items-center gap-2">
-                    <BarChart3 className="w-4 h-4" />Ticket Status Snapshot
-                  </h2>
-                  <p className="text-xs text-muted-foreground">Weekly Active/Review/Final uploads: A = Active, E/R = Review, and F = Final Edit.</p>
-                </div>
-                <div className="text-xs text-muted-foreground">Grouped by Monday-Friday week</div>
-              </div>
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={statusChartData} margin={{ top: 8, right: 8, bottom: 0, left: -10 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 14% 88%)" opacity={0.9} />
-                  <XAxis dataKey="week" stroke="hsl(220 10% 42%)" fontSize={11} tickLine={false} axisLine={false} />
-                  <YAxis stroke="hsl(220 10% 42%)" fontSize={11} tickLine={false} axisLine={false} width={48} />
-                  <Tooltip
-                    cursor={{ fill: "hsl(186 54% 93%)", opacity: 0.5 }}
-                    contentStyle={{ background: "hsl(0 0% 100%)", color: "hsl(220 25% 16%)", border: "1px solid hsl(220 14% 86%)", borderRadius: 8, fontSize: 12 }}
-                    formatter={(v: any, name: any) => [Number(v).toLocaleString(), name]}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Bar dataKey="active" name="Active" fill="#38bdf8" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="review" name="Review" fill="#fbbf24" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="finalEdit" name="Final Edit" fill="#34d399" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
             </Card>
           )}
 
@@ -677,6 +754,46 @@ function AnalyticsPage() {
                 </Card>
               );
             })}
+            {statusChartData.length > 0 && (
+              <Card className="p-6">
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="font-display text-base font-semibold">Ticket Status Snapshot</h3>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Active, Review, and Final Edit ticket counts for {activeMonthLabel}.
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-2xl font-display font-bold text-primary">
+                      {latestStatusTotal.toLocaleString()}
+                    </div>
+                    <div className="text-[11px] font-semibold text-muted-foreground">
+                      Latest week total
+                    </div>
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height={260}>
+                  <LineChart data={statusChartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                    <XAxis dataKey="week" stroke="var(--muted-foreground)" fontSize={11} />
+                    <YAxis stroke="var(--muted-foreground)" fontSize={11} />
+                    <Tooltip
+                      cursor={{ stroke: "var(--muted-foreground)", strokeDasharray: "3 3" }}
+                      contentStyle={{ background: "hsl(0 0% 100%)", color: "hsl(220 25% 16%)", border: "1px solid hsl(220 14% 86%)", borderRadius: 8, fontSize: 12 }}
+                      formatter={(v: any, name: any) => [v == null ? "—" : Number(v).toLocaleString(), name]}
+                      labelFormatter={(label) => {
+                        const point = statusChartData.find((row) => row.week === label);
+                        return point?.period ?? String(label);
+                      }}
+                    />
+                    <Legend />
+                    <Line type="monotone" dataKey="active" name="Active" stroke="#38bdf8" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                    <Line type="monotone" dataKey="review" name="Review" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                    <Line type="monotone" dataKey="finalEdit" name="Final Edit" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                  </LineChart>
+                </ResponsiveContainer>
+              </Card>
+            )}
           </div>
           )}
         </>

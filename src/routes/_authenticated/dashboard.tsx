@@ -12,8 +12,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StatusPill } from "@/components/StatusPill";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
-import { useEffect, useMemo, useState } from "react";
-import { Ticket, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Minus, Mail, TrendingUp, Pencil, Eye, Lock, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Ticket, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Minus, Mail, TrendingUp, Pencil, Eye, Lock, Trash2, CalendarDays } from "lucide-react";
 import { toast } from "sonner";
 import { canEdit, useAuth } from "@/lib/useAuth";
 import { useDemoMode } from "@/lib/demoMode";
@@ -21,6 +21,9 @@ import { isSeededDemoEmail, isSeededDemoNote, isSeededDemoSource, isSeededDemoUp
 import { isQueuedTestEmail } from "@/lib/emailJobs";
 import { deleteManagerNote, updateManagerNote } from "@/lib/notesServer";
 import { reportKindLabel } from "@/lib/reportTypes";
+import { fetchLatestOpenJobsRows } from "@/lib/openJobsData";
+import { openJobCustomerKey } from "@/lib/openJobs";
+import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
 import {
   DEMO_TARGETS,
   demoAutoKpisForRange,
@@ -47,6 +50,9 @@ const MANUAL_TREND_COLORS = [
   "oklch(0.67 0.2 55)",
   "oklch(0.57 0.2 25)",
 ];
+const PERCENT_TREND_KEYS = ["review_to_final_edit", "dispatch_responsiveness"];
+const NUMBER_TREND_KEYS = ["invoice_cycle_time", "ticket_quality", "driver_safety", "incomplete_tickets", "missed_jobs"];
+const TOTAL_DISPLAY_KPI_KEYS = ["driver_safety", "incomplete_tickets", "missed_jobs"];
 
 type WeekRangeOption = { from: string; to: string; label: string };
 type MetricWeekPoint = WeekRangeOption & { actual: number | null; status: KpiStatus };
@@ -291,6 +297,27 @@ function numericOrNull(value: unknown) {
   return Number.isFinite(numberValue) ? numberValue : null;
 }
 
+function normalizedEmail(value: unknown) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function effectiveEmailJobStatus(job: any): "sent" | "pending" | "failed" {
+  if (job?.status === "sent" || job?.sent_at) return "sent";
+  if (job?.status === "pending") {
+    const createdAt = new Date(job.created_at).getTime();
+    if (Number.isFinite(createdAt) && Date.now() - createdAt > 30_000) return "failed";
+    return "pending";
+  }
+  return job?.status === "failed" ? "failed" : "failed";
+}
+
+function isEmailJobForCurrentRecipient(job: any, customer: any | null) {
+  if (!customer?.id) return false;
+  const currentEmail = normalizedEmail(customer.email);
+  if (!currentEmail) return false;
+  return job?.customer_id === customer.id && normalizedEmail(job?.customer_email) === currentEmail;
+}
+
 function autoMetricValue(auto: any, kpiKey: string) {
   if (!auto) return null;
   if (kpiKey === "quality_issues") return numericOrNull(auto.totals?.quality_issues);
@@ -335,6 +362,42 @@ function latestValuesFromSeries(targets: KpiTarget[], seriesByKey: Map<string, M
   return map;
 }
 
+function sumMetricActuals(points: MetricWeekPoint[]) {
+  let total = 0;
+  let hasValue = false;
+  for (const point of points) {
+    if (point.actual == null || !Number.isFinite(Number(point.actual))) continue;
+    total += Number(point.actual);
+    hasValue = true;
+  }
+  return hasValue ? total : null;
+}
+
+function sumManualMetricRowsForWeeks(rows: any[], kpiKey: string, weeks: WeekRangeOption[]) {
+  const selectedWeeks = new Set(weeks.map((week) => week.from));
+  const latestByWeek = new Map<string, { actual: number | null; sourceWeekStart: string }>();
+
+  for (const row of rows) {
+    if (row.kpi_key !== kpiKey || row.source === "auto" || !row.week_start) continue;
+    const weekStart = manualWeekStartForDate(String(row.week_start));
+    if (!selectedWeeks.has(weekStart)) continue;
+    const actual = numericOrNull(row.actual);
+    const existing = latestByWeek.get(weekStart);
+    if (!existing || String(row.week_start) >= existing.sourceWeekStart) {
+      latestByWeek.set(weekStart, { actual, sourceWeekStart: String(row.week_start) });
+    }
+  }
+
+  let total = 0;
+  let hasValue = false;
+  for (const item of latestByWeek.values()) {
+    if (item.actual == null) continue;
+    total += item.actual;
+    hasValue = true;
+  }
+  return hasValue ? total : null;
+}
+
 function applyRangeScopedAutoValues(map: Record<string, number | null>, auto: any) {
   const ticketQuality = autoMetricValue(auto, "ticket_quality");
   if (ticketQuality == null) return map;
@@ -346,6 +409,44 @@ function statusDotClass(status: KpiStatus) {
   if (status === "yellow") return "bg-warning";
   if (status === "red") return "bg-destructive";
   return "bg-muted-foreground/30";
+}
+
+function ManualTrendTooltip({ active, payload, targets }: any & { targets: KpiTarget[] }) {
+  if (!active || !payload?.length) return null;
+  const rows = payload.filter((item: any) => item.value != null);
+  if (!rows.length) return null;
+  const period = payload[0]?.payload?.period ?? payload[0]?.payload?.week ?? "";
+
+  return (
+    <div className="max-w-[300px] rounded-lg border bg-popover/95 p-2.5 text-xs shadow-lg backdrop-blur">
+      <div className="mb-2 truncate font-medium text-foreground" title={period}>
+        {period}
+      </div>
+      <div className="space-y-1">
+        {rows.map((item: any) => {
+          const target = targets.find((trendTarget) => trendTarget.label === item.name);
+          const numberValue = Number(item.value);
+          const displayValue =
+            target && Number.isFinite(numberValue) ? formatKpi(numberValue, target) : item.value;
+
+          return (
+            <div key={item.name} className="flex items-center justify-between gap-3">
+              <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+                <span
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: item.color }}
+                />
+                <span className="truncate" title={item.name}>
+                  {item.name}
+                </span>
+              </span>
+              <span className="shrink-0 font-semibold text-foreground">{displayValue}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function Dashboard() {
@@ -361,6 +462,7 @@ function Dashboard() {
   );
   const range = dashboardRangeState.range;
   const [trendMonth, setTrendMonth] = useState(() => monthKeyFromIso(range.from));
+  const trendMonthInputRef = useRef<HTMLInputElement | null>(null);
   const validRange = !!range.from && !!range.to && range.from <= range.to;
   const prevRange = useMemo(() => previousDateRange(range), [range]);
   const dashboardWeekRanges = useMemo(() => businessWeekRangesForRange(range), [range]);
@@ -384,6 +486,19 @@ function Dashboard() {
       mode: "custom",
       range: { ...current.range, [boundary]: value },
     }));
+  }
+
+  function openTrendMonthPicker() {
+    const input = trendMonthInputRef.current;
+    if (!input) return;
+    input.focus();
+
+    try {
+      (input as HTMLInputElement & { showPicker?: () => void }).showPicker?.();
+    } catch {
+      // Some browsers only allow showPicker from very specific pointer events.
+      // Focusing still lets keyboard users and unsupported browsers change the month.
+    }
   }
 
   const targetsQ = useQuery({
@@ -463,25 +578,77 @@ function Dashboard() {
   });
 
   const emailStatsQ = useQuery({
-    queryKey: ["email_stats", range, demoMode],
+    queryKey: ["email_stats_current_open_jobs", demoMode],
     queryFn: async () => {
-      if (demoMode) return demoEmailStats();
-      const { data } = await supabase
-        .from("email_jobs")
-        .select("status,customer_email,subject,attachment_name")
-        .gte("week_start", range.from)
-        .lte("week_start", range.to);
-      const rows = (data ?? []).filter(
+      if (demoMode) {
+        const demo = demoEmailStats();
+        return {
+          ready: demo.ready,
+          sent: demo.sent,
+          failed: (demo.failed ?? 0) + (demo.pending ?? 0),
+        };
+      }
+
+      const { upload, rows: openJobs } = await fetchLatestOpenJobsRows();
+      if (!upload || openJobs.length === 0) return { ready: 0, sent: 0, failed: 0 };
+
+      const customerKeys = Array.from(
+        new Set(openJobs.map((job: any) => openJobCustomerKey(job)).filter(Boolean)),
+      );
+      if (customerKeys.length === 0) return { ready: 0, sent: 0, failed: 0 };
+
+      const customers = await fetchAllSupabaseRows<any>((from, to) =>
+        supabase
+          .from("customers")
+          .select("id,key,email,enabled")
+          .in("key", customerKeys)
+          .range(from, to),
+      );
+      const customerByKey = new Map(
+        customers
+          .filter((customer) => !isSeededDemoEmail(customer.email))
+          .map((customer) => [customer.key, customer]),
+      );
+
+      const weekStart = upload.week_start ?? null;
+      const uploadedAt = upload.created_at ?? null;
+      if (!weekStart) return { ready: 0, sent: 0, failed: 0 };
+
+      const emailJobs = await fetchAllSupabaseRows<any>((from, to) => {
+        let query = supabase
+          .from("email_jobs")
+          .select("*")
+          .eq("week_start", weekStart)
+          .order("created_at", { ascending: false })
+          .range(from, to);
+        if (uploadedAt) query = query.gte("created_at", uploadedAt);
+        return query;
+      });
+      const cleanEmailJobs = emailJobs.filter(
         (row) => !isSeededDemoEmail(row.customer_email) && !isQueuedTestEmail(row),
       );
-      return {
-        ready: rows.filter((r: any) => r.status === "pending").length,
-        sent: rows.filter((r: any) => r.status === "sent").length,
-        pending: rows.filter((r: any) => r.status === "pending").length,
-        failed: rows.filter((r: any) => r.status === "failed").length,
-      };
+
+      let ready = 0;
+      let sent = 0;
+      let failed = 0;
+
+      for (const key of customerKeys) {
+        const customer = customerByKey.get(key) ?? null;
+        if (!customer?.enabled || !customer.email) continue;
+        ready++;
+        const history = cleanEmailJobs.filter((job) => isEmailJobForCurrentRecipient(job, customer));
+        const sentJob = history.find((job) => effectiveEmailJobStatus(job) === "sent");
+        if (sentJob) {
+          sent++;
+          continue;
+        }
+        const latest = history[0];
+        if (latest && effectiveEmailJobStatus(latest) === "failed") failed++;
+      }
+
+      return { ready, sent, failed };
     },
-    enabled: validRange,
+    refetchInterval: 15_000,
   });
 
   const lastUploadQ = useQuery({
@@ -516,10 +683,14 @@ function Dashboard() {
     return series;
   }, [targets, fetchedWeekRanges, weeklyAutoQ.data, valuesQ.data]);
 
-  const currentMap = useMemo(
-    () => applyRangeScopedAutoValues(latestValuesFromSeries(targets, metricSeriesByKey), autoQ.data),
-    [targets, metricSeriesByKey, autoQ.data],
-  );
+  const currentMap = useMemo(() => {
+    const map = latestValuesFromSeries(targets, metricSeriesByKey);
+    for (const kpiKey of TOTAL_DISPLAY_KPI_KEYS) {
+      const monthlyTotal = sumMetricActuals(metricSeriesByKey.get(kpiKey) ?? []);
+      if (monthlyTotal != null) map[kpiKey] = monthlyTotal;
+    }
+    return applyRangeScopedAutoValues(map, autoQ.data);
+  }, [targets, metricSeriesByKey, autoQ.data]);
 
   const prevMap = useMemo(() => {
     const auto: any = autoPrevQ.data ?? {};
@@ -531,40 +702,45 @@ function Dashboard() {
       quality_issues: auto.totals?.quality_issues ?? null,
     };
     Object.assign(map, latestValuesMap(prevValuesQ.data ?? []));
+    for (const kpiKey of TOTAL_DISPLAY_KPI_KEYS) {
+      const prevTotal = sumManualMetricRowsForWeeks(
+        prevValuesQ.data ?? [],
+        kpiKey,
+        businessWeekRangesForRange(prevRange).slice(0, MAX_WEEK_DETAIL_FETCH),
+      );
+      if (prevTotal != null) map[kpiKey] = prevTotal;
+    }
     return applyRangeScopedAutoValues(map, autoPrevQ.data);
-  }, [autoPrevQ.data, prevValuesQ.data]);
+  }, [autoPrevQ.data, prevRange, prevValuesQ.data]);
 
   const rows = useMemo(() => buildRows(targets, currentMap, prevMap), [targets, currentMap, prevMap]);
   const summary = useMemo(() => overallScore(rows), [rows]);
   const focus = useMemo(() => focusAreas(rows), [rows]);
   const trendRows = useMemo(
-    () => trendChart(trendAutoQ.data ?? [], trendValuesQ.data ?? []),
-    [trendAutoQ.data, trendValuesQ.data],
+    () => combinedTrendChart(trendMonthWeeks, trendAutoQ.data ?? [], trendValuesQ.data ?? [], targets),
+    [trendMonthWeeks, trendAutoQ.data, trendValuesQ.data, targets],
   );
-  const trendHasData = trendRows.some(
-    (row) =>
-      row["Review-Final QC"] != null ||
-      row["Ticket Quality %"] != null ||
-      row["Invoice Cycle (d)"] != null,
+  const percentageTrendTargets = useMemo(
+    () => orderedTrendTargets(targets, PERCENT_TREND_KEYS),
+    [targets],
   );
-  const manualTrendTargets = useMemo(() => targets.filter((target) => !target.auto), [targets]);
-  const manualTrendRows = useMemo(
-    () => manualTrendChart(trendMonthWeeks, trendValuesQ.data ?? [], manualTrendTargets),
-    [trendMonthWeeks, trendValuesQ.data, manualTrendTargets],
+  const numberTrendTargets = useMemo(
+    () => orderedTrendTargets(targets, NUMBER_TREND_KEYS),
+    [targets],
   );
-  const manualTrendVisibleTargets = useMemo(
-    () =>
-      manualTrendTargets.filter((target) =>
-        manualTrendRows.some((row) => row[target.label] != null),
-      ),
-    [manualTrendTargets, manualTrendRows],
+  const visiblePercentageTrendTargets = useMemo(
+    () => visibleTrendTargets(percentageTrendTargets, trendRows),
+    [percentageTrendTargets, trendRows],
   );
-  const manualTrendHasData = manualTrendVisibleTargets.length > 0;
+  const visibleNumberTrendTargets = useMemo(
+    () => visibleTrendTargets(numberTrendTargets, trendRows),
+    [numberTrendTargets, trendRows],
+  );
+  const percentageTrendHasData = visiblePercentageTrendTargets.length > 0;
+  const numberTrendHasData = visibleNumberTrendTargets.length > 0;
 
   const totals = autoQ.data?.totals ?? { tickets: 0, invoiced: 0, quality_issues: 0, quality_total_tickets: 0, qc_tickets: 0, qc_review_tickets: 0, qc_final_tickets: 0, cycle_time_rows: 0, voided: 0, active_tickets: 0, review_tickets: 0, final_edit_tickets: 0 };
   const noData = !validRange || (totals.tickets === 0 && totals.qc_tickets === 0 && totals.cycle_time_rows === 0 && totals.invoiced === 0 && totals.quality_issues === 0 && totals.quality_total_tickets === 0);
-  const ticketQcTarget = targets.find((target) => target.kpi_key === "review_to_final_edit") ?? null;
-
   const [editingKpi, setEditingKpi] = useState<KpiTarget | null>(null);
   const [editValue, setEditValue] = useState("");
   const [editingWeek, setEditingWeek] = useState("");
@@ -754,7 +930,7 @@ function Dashboard() {
             <div className="mt-1 flex gap-4">
               <div><span className="font-semibold text-lg">{emailStatsQ.data?.ready ?? 0}</span> <span className="text-xs text-muted-foreground">Ready</span></div>
               <div><span className="font-semibold text-lg text-success">{emailStatsQ.data?.sent ?? 0}</span> <span className="text-xs text-muted-foreground">Sent</span></div>
-              <div><span className="font-semibold text-lg text-warning">{emailStatsQ.data?.pending ?? 0}</span> <span className="text-xs text-muted-foreground">Pending</span></div>
+              <div><span className="font-semibold text-lg text-destructive">{emailStatsQ.data?.failed ?? 0}</span> <span className="text-xs text-muted-foreground">Failed</span></div>
             </div>
           </div>
         </div>
@@ -774,16 +950,10 @@ function Dashboard() {
       )}
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard icon={Ticket} label="Active Tickets" value={totals.active_tickets} accent="text-primary" />
         <StatCard icon={Ticket} label="Review Tickets" value={totals.review_tickets} accent="text-warning" />
         <StatCard icon={CheckCircle2} label="Final Edit Tickets" value={totals.final_edit_tickets} accent="text-success" />
-        <TicketQcStatCard
-          target={ticketQcTarget}
-          actual={currentMap.review_to_final_edit}
-          reviewRows={totals.qc_review_tickets ?? 0}
-          finalRows={totals.qc_final_tickets ?? totals.qc_tickets ?? 0}
-        />
       </div>
 
       {/* Operational Summary */}
@@ -811,8 +981,7 @@ function Dashboard() {
               <div key={r.target.id} className={`h-full min-h-[210px] rounded-lg border border-l-4 p-4 ${color} bg-card`}>
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
                   <div className="min-w-0">
-                    <div className="break-words text-xs uppercase tracking-wide text-muted-foreground">{r.target.owner ?? r.target.cadence}</div>
-                    <div className="mt-1 break-words font-medium leading-snug">{r.target.label}</div>
+                    <div className="break-words font-medium leading-snug">{r.target.label}</div>
                   </div>
                   <StatusPill status={r.status} />
                 </div>
@@ -912,75 +1081,50 @@ function Dashboard() {
         <Card className="p-6">
           <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h3 className="font-display text-base font-semibold">KPI Trends</h3>
+              <h3 className="font-display text-base font-semibold">Percentage KPI Trends</h3>
               <p className="text-xs text-muted-foreground mt-1">
-                Showing {monthDisplayLabel(trendMonth)} by Monday-Friday week.
+                Tickets QC'd and Team Responsiveness for {monthDisplayLabel(trendMonth)}.
               </p>
             </div>
             <div className="space-y-1">
               <Label htmlFor="trend-month" className="text-xs text-muted-foreground">Month</Label>
-              <Input
-                id="trend-month"
-                type="month"
-                value={trendMonth}
-                onChange={(event) => setTrendMonth(event.target.value)}
-                className="w-[160px]"
-              />
+              <div className="relative w-[180px]">
+                <Input
+                  ref={trendMonthInputRef}
+                  id="trend-month"
+                  type="month"
+                  value={trendMonth}
+                  onClick={openTrendMonthPicker}
+                  onChange={(event) => setTrendMonth(event.target.value)}
+                  className="w-full cursor-pointer pr-10 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:h-full [&::-webkit-calendar-picker-indicator]:w-full [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  onClick={openTrendMonthPicker}
+                  aria-label="Open month picker"
+                >
+                  <CalendarDays className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
           </div>
           {trendAutoQ.isLoading || trendValuesQ.isLoading ? (
             <div className="h-[260px] rounded-md bg-muted/30 animate-pulse" />
-          ) : trendHasData ? (
+          ) : percentageTrendHasData ? (
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={trendRows}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                 <XAxis dataKey="week" stroke="var(--muted-foreground)" fontSize={11} />
                 <YAxis stroke="var(--muted-foreground)" fontSize={11} />
                 <Tooltip
-                  labelFormatter={(_, payload: any) => payload?.[0]?.payload?.period ?? ""}
-                  contentStyle={{ borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+                  content={<ManualTrendTooltip targets={visiblePercentageTrendTargets} />}
+                  cursor={{ stroke: "var(--muted-foreground)", strokeDasharray: "3 3" }}
                 />
                 <Legend />
-                <Line type="monotone" dataKey="Review-Final QC" stroke="oklch(0.62 0.13 190)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
-                <Line type="monotone" dataKey="Ticket Quality %" stroke="oklch(0.78 0.16 75)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
-                <Line type="monotone" dataKey="Invoice Cycle (d)" stroke="oklch(0.6 0.22 25)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-[260px] rounded-md border border-dashed flex items-center justify-center px-6 text-center text-sm text-muted-foreground">
-              No KPI trend data for {monthDisplayLabel(trendMonth)} yet.
-            </div>
-          )}
-        </Card>
-        <Card className="p-6">
-          <div className="mb-4">
-            <h3 className="font-display text-base font-semibold">Manual KPI Trends</h3>
-            <p className="text-xs text-muted-foreground mt-1">
-              Saved manual entries for {monthDisplayLabel(trendMonth)}, kept separate from the automatic KPI graph.
-            </p>
-          </div>
-          {trendValuesQ.isLoading ? (
-            <div className="h-[260px] rounded-md bg-muted/30 animate-pulse" />
-          ) : manualTrendHasData ? (
-            <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={manualTrendRows}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="week" stroke="var(--muted-foreground)" fontSize={11} />
-                <YAxis stroke="var(--muted-foreground)" fontSize={11} />
-                <Tooltip
-                  labelFormatter={(_, payload: any) => payload?.[0]?.payload?.period ?? ""}
-                  formatter={(value: any, name: any) => {
-                    const target = manualTrendVisibleTargets.find((item) => item.label === name);
-                    const numberValue = Number(value);
-                    return [
-                      target && Number.isFinite(numberValue) ? formatKpi(numberValue, target) : value,
-                      name,
-                    ];
-                  }}
-                  contentStyle={{ borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
-                />
-                <Legend />
-                {manualTrendVisibleTargets.map((target, index) => (
+                {visiblePercentageTrendTargets.map((target, index) => (
                   <Line
                     key={target.kpi_key}
                     type="monotone"
@@ -995,7 +1139,46 @@ function Dashboard() {
             </ResponsiveContainer>
           ) : (
             <div className="h-[260px] rounded-md border border-dashed flex items-center justify-center px-6 text-center text-sm text-muted-foreground">
-              No manual KPI trend data for {monthDisplayLabel(trendMonth)} yet.
+              No percentage KPI trend data for {monthDisplayLabel(trendMonth)} yet.
+            </div>
+          )}
+        </Card>
+        <Card className="p-6">
+          <div className="mb-4">
+            <h3 className="font-display text-base font-semibold">Number & Time KPI Trends</h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              Invoice Cycle Time, Ticket Quality errors, Safety, Incomplete Tickets, and Missed Jobs for {monthDisplayLabel(trendMonth)}.
+            </p>
+          </div>
+          {trendAutoQ.isLoading || trendValuesQ.isLoading ? (
+            <div className="h-[260px] rounded-md bg-muted/30 animate-pulse" />
+          ) : numberTrendHasData ? (
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart data={trendRows}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                <XAxis dataKey="week" stroke="var(--muted-foreground)" fontSize={11} />
+                <YAxis stroke="var(--muted-foreground)" fontSize={11} />
+                <Tooltip
+                  content={<ManualTrendTooltip targets={visibleNumberTrendTargets} />}
+                  cursor={{ stroke: "var(--muted-foreground)", strokeDasharray: "3 3" }}
+                />
+                <Legend />
+                {visibleNumberTrendTargets.map((target, index) => (
+                  <Line
+                    key={target.kpi_key}
+                    type="monotone"
+                    dataKey={target.label}
+                    stroke={MANUAL_TREND_COLORS[index % MANUAL_TREND_COLORS.length]}
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                    connectNulls
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-[260px] rounded-md border border-dashed flex items-center justify-center px-6 text-center text-sm text-muted-foreground">
+              No number or time KPI trend data for {monthDisplayLabel(trendMonth)} yet.
             </div>
           )}
         </Card>
@@ -1328,74 +1511,65 @@ function StatCard({ icon: Icon, label, value, accent }: { icon: any; label: stri
   );
 }
 
-function TicketQcStatCard({
-  target,
-  actual,
-  reviewRows,
-  finalRows,
-}: {
-  target: KpiTarget | null;
-  actual: number | null | undefined;
-  reviewRows: number;
-  finalRows: number;
-}) {
-  const value = target ? formatKpi(actual, target) : actual != null ? `${Number(actual).toFixed(1)}%` : "â€”";
-  const status = target ? computeStatus(actual, target) : "none";
-  return (
-    <Card className="p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-xs text-muted-foreground uppercase tracking-wide">Ticket QC</div>
-          <div className="text-3xl font-display font-semibold mt-1">{value}</div>
-          <div className="mt-2 text-xs text-muted-foreground">
-            Target: <span className="font-semibold text-foreground">{target?.target_display ?? ">= 95%"}</span>
-          </div>
-        </div>
-        <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center text-success">
-          <CheckCircle2 className="w-5 h-5" />
-        </div>
-      </div>
-      <div className="mt-3">
-        <StatusPill status={status} />
-      </div>
-    </Card>
-  );
+function orderedTrendTargets(targets: KpiTarget[], keys: string[]) {
+  const byKey = new Map(targets.map((target) => [target.kpi_key, target]));
+  return keys
+    .map((key) => byKey.get(key))
+    .filter((target): target is KpiTarget => !!target);
 }
 
-function savedTrendValuesByWeek(rows: any[]) {
-  const byWeek = new Map<string, Record<string, number | null>>();
+function visibleTrendTargets(targets: KpiTarget[], rows: TrendRow[]) {
+  return targets.filter((target) => rows.some((row) => row[target.label] != null));
+}
+
+function savedTrendValuesByWeek(rows: any[], targetKeys: Set<string>) {
+  const byWeek = new Map<string, Map<string, { actual: number | null; sourceWeekStart: string }>>();
 
   for (const row of rows) {
-    if (!row.week_start) continue;
+    if (!row.kpi_key || !row.week_start || !targetKeys.has(row.kpi_key)) continue;
     const week = manualWeekStartForDate(String(row.week_start));
-    const values = byWeek.get(week) ?? {};
-    if (row.kpi_key === "review_to_final_edit") values["Review-Final QC"] = numericOrNull(row.actual);
-    if (row.kpi_key === "ticket_quality") values["Ticket Quality %"] = numericOrNull(row.actual);
-    if (row.kpi_key === "invoice_cycle_time") values["Invoice Cycle (d)"] = numericOrNull(row.actual);
+    const values = byWeek.get(week) ?? new Map<string, { actual: number | null; sourceWeekStart: string }>();
+    const existing = values.get(row.kpi_key);
+    if (!existing || String(row.week_start) >= existing.sourceWeekStart) {
+      values.set(row.kpi_key, {
+        actual: numericOrNull(row.actual),
+        sourceWeekStart: String(row.week_start),
+      });
+    }
     byWeek.set(week, values);
   }
 
   return byWeek;
 }
 
-function trendChart(rows: Array<WeekRangeOption & { data: any }>, savedRows: any[]) {
-  const savedByWeek = savedTrendValuesByWeek(savedRows);
-  return rows.map((row) => ({
-    week: row.label,
-    period: `${row.label}: ${formatWeek(row.from)} - ${formatWeek(row.to)}`,
-    "Review-Final QC":
-      numericOrNull(row.data?.review_to_final_edit) ??
-      savedByWeek.get(row.from)?.["Review-Final QC"] ??
-      null,
-    "Ticket Quality %":
-      numericOrNull(row.data?.ticket_quality) ??
-      savedByWeek.get(row.from)?.["Ticket Quality %"] ??
-      null,
-    "Invoice Cycle (d)":
-      numericOrNull(row.data?.invoice_cycle_time) ??
-      savedByWeek.get(row.from)?.["Invoice Cycle (d)"] ??
-      null,
-  }));
+function combinedTrendChart(
+  weeks: WeekRangeOption[],
+  autoRows: Array<WeekRangeOption & { data: any }>,
+  savedRows: any[],
+  targets: KpiTarget[],
+): TrendRow[] {
+  const chartTargets = orderedTrendTargets(targets, [...PERCENT_TREND_KEYS, ...NUMBER_TREND_KEYS]);
+  const targetKeys = new Set(chartTargets.map((target) => target.kpi_key));
+  const autoByWeek = new Map(autoRows.map((row) => [row.from, row.data]));
+  const savedByWeek = savedTrendValuesByWeek(savedRows, targetKeys);
+
+  return weeks.map((week) => {
+    const row: TrendRow = {
+      week: week.label,
+      period: `${week.label}: ${formatWeek(week.from)} - ${formatWeek(week.to)}`,
+    };
+    const auto = autoByWeek.get(week.from);
+    const saved = savedByWeek.get(week.from);
+
+    for (const target of chartTargets) {
+      row[target.label] =
+        autoMetricValue(auto, target.kpi_key) ??
+        saved?.get(target.kpi_key)?.actual ??
+        null;
+    }
+
+    return row;
+  });
 }
 
 function manualTrendChart(weeks: WeekRangeOption[], savedRows: any[], targets: KpiTarget[]): TrendRow[] {

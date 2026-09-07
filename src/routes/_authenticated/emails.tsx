@@ -101,21 +101,26 @@ function EmailsPage() {
   });
 
   const emailJobsQ = useQuery({
-    queryKey: ["email_jobs", w, demoMode],
+    queryKey: ["email_jobs", currentOpenJobsUpload?.id ?? w, currentOpenJobsUpload?.created_at ?? null, demoMode],
     queryFn: async () => {
       if (!w) return [];
       if (demoMode) return demoEmailJobs(w);
-      const data = await fetchAllSupabaseRows<any>((from, to) =>
-        supabase
+      const data = await fetchAllSupabaseRows<any>((from, to) => {
+        let query = supabase
           .from("email_jobs")
           .select("*")
           .eq("week_start", w)
           .order("created_at", { ascending: false })
-          .range(from, to),
-      );
+          .range(from, to);
+        if (currentOpenJobsUpload?.created_at) {
+          query = query.gte("created_at", currentOpenJobsUpload.created_at);
+        }
+        return query;
+      });
       return data.filter((row) => !isSeededDemoEmail(row.customer_email) && !isQueuedTestEmail(row));
     },
     enabled: !!w,
+    refetchInterval: 10_000,
   });
 
   const rows = useMemo<EmailRow[]>(() => {
@@ -143,11 +148,12 @@ function EmailsPage() {
         const history = emailJobs.filter((job: any) => isEmailJobForCurrentRecipient(job, customer));
         const sentEmailJob = history.find(isSentEmailJob) ?? null;
         const latestEmailJob = history[0] ?? null;
+        const latestStatus = latestEmailJob ? effectiveEmailJobStatus(latestEmailJob) : null;
         const deliveryStatus: EmailRow["deliveryStatus"] = sentEmailJob
           ? "sent"
-          : latestEmailJob?.status === "pending"
+          : latestStatus === "pending"
             ? "pending"
-            : latestEmailJob?.status === "failed"
+            : latestStatus === "failed"
               ? "failed"
               : setupStatus;
 
@@ -168,7 +174,7 @@ function EmailsPage() {
 
   const sendableRows = rows.filter((row) => row.canSend);
   const sentCount = rows.filter((row) => row.deliveryStatus === "sent").length;
-  const pendingCount = rows.filter((row) => row.deliveryStatus === "pending").length;
+  const failedCount = rows.filter((row) => row.deliveryStatus === "failed").length;
   const missingEmail = rows.filter(
     (row) => row.setupStatus === "no_email" || row.setupStatus === "unmatched",
   ).length;
@@ -296,7 +302,7 @@ function EmailsPage() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <SnapCard label="Can send" value={sendableRows.length} accent="text-success" />
         <SnapCard label="Sent" value={sentCount} accent="text-primary" />
-        <SnapCard label="Pending" value={pendingCount} accent="text-warning" />
+        <SnapCard label="Failed" value={failedCount} accent="text-destructive" />
         <SnapCard label="Needs setup" value={missingEmail} accent="text-destructive" />
       </div>
 
@@ -403,7 +409,7 @@ function EmailsPage() {
                     {job.attachment_name ?? "-"}
                   </td>
                   <td className="px-4 py-3">
-                    <DeliveryStatus status={job.status} error={job.error} />
+                    <DeliveryStatus status={effectiveEmailJobStatus(job)} error={job.error} />
                   </td>
                   <td className="px-4 py-3 text-right whitespace-nowrap space-x-1">
                     {job.status === "failed" && (
@@ -663,8 +669,18 @@ function DeliveryStatus({ status, error }: { status: string; error?: string | nu
   return <span className="text-success text-xs font-medium">Ready</span>;
 }
 
+function effectiveEmailJobStatus(job: any): "sent" | "pending" | "failed" {
+  if (job?.status === "sent" || !!job?.sent_at) return "sent";
+  if (job?.status === "pending") {
+    const createdAt = new Date(job.created_at).getTime();
+    if (Number.isFinite(createdAt) && Date.now() - createdAt > 30_000) return "failed";
+    return "pending";
+  }
+  return job?.status === "failed" ? "failed" : "failed";
+}
+
 function isSentEmailJob(job: any) {
-  return job?.status === "sent" || !!job?.sent_at;
+  return effectiveEmailJobStatus(job) === "sent";
 }
 
 function normalizedEmail(value: unknown) {

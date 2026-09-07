@@ -12,7 +12,6 @@ import {
   isTicketQcUpload,
   isTicketQualityErrorUpload,
   isTicketQualityUpload,
-  isTcrTotalUpload,
   isTotalCycleTimeUpload,
 } from "@/lib/reportTypes";
 import { fetchAllSupabaseRows } from "@/lib/supabasePagination";
@@ -57,32 +56,73 @@ export function formatKpi(actual: number | null | undefined, t: KpiTarget): stri
   return target.unit === "%" ? `${n}%` : target.unit === "days" ? `${n} d` : n;
 }
 
+function finiteNumber(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function formatTargetNumber(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, "");
+}
+
+export function deriveYellowMin(target: KpiTarget) {
+  const greenMin = finiteNumber(target.green_min, 0);
+  if (target.direction !== "higher_is_better") return greenMin;
+  if (target.unit === "%") return Math.max(0, greenMin - 10);
+  return Math.max(0, greenMin * 0.9);
+}
+
+export function deriveTargetDisplay(target: KpiTarget) {
+  const greenMin = finiteNumber(target.green_min, 0);
+  const symbol = target.direction === "higher_is_better" ? ">=" : "<=";
+  const value = formatTargetNumber(greenMin);
+  if (target.unit === "%") return `${symbol} ${value}%`;
+  if (target.unit === "days") return `${symbol} ${value} days`;
+  return `${symbol} ${value}`;
+}
+
+function withDerivedTargetFields(target: KpiTarget, fallbackGreenMin = 0): KpiTarget {
+  const normalized = {
+    ...target,
+    green_min: finiteNumber(target.green_min, fallbackGreenMin),
+  };
+  return {
+    ...normalized,
+    yellow_min: deriveYellowMin(normalized),
+    target_display: deriveTargetDisplay(normalized),
+  };
+}
+
+function isLegacyTicketQualityTarget(target: KpiTarget) {
+  return (
+    target.unit === "%" ||
+    /%/.test(target.target_display ?? "") ||
+    finiteNumber(target.green_min, 10) > 50
+  );
+}
+
 export function normalizeKpiTarget(target: KpiTarget): KpiTarget {
   if (target.kpi_key === "review_to_final_edit") {
-    return {
+    return withDerivedTargetFields({
       ...target,
       label: "Tickets QC'd - Review to Final Edit",
       unit: "%",
       direction: "higher_is_better",
-      green_min: 95,
-      yellow_min: 85,
-      target_display: ">= 95%",
+      green_min: finiteNumber(target.green_min, 95),
       auto: true,
-    };
+    }, 95);
   }
   if (target.kpi_key === "ticket_quality") {
-    return {
+    return withDerivedTargetFields({
       ...target,
       label: "Ticket Quality",
-      unit: "%",
-      direction: "higher_is_better",
-      green_min: 95,
-      yellow_min: 90,
-      target_display: ">= 95%",
+      unit: "count",
+      direction: "lower_is_better",
+      green_min: isLegacyTicketQualityTarget(target) ? 10 : finiteNumber(target.green_min, 10),
       auto: true,
-    };
+    }, 10);
   }
-  return target;
+  return withDerivedTargetFields(target, target.green_min);
 }
 
 export function normalizeKpiTargets(targets: KpiTarget[]) {
@@ -231,18 +271,12 @@ function calculateTicketQcReviewToFinal(uploads: UploadLike[]) {
 
 function calculateTicketQualityFromUploads(uploads: UploadLike[], errorRowsInRange: number) {
   const errorUpload = latestUpload(uploads.filter(isTicketQualityErrorUpload));
-  const totalUpload = latestUpload(uploads.filter(isTcrTotalUpload));
   const errorRows = errorUpload ? errorRowsInRange : 0;
-  const totalRows = totalUpload ? sumImportedRows([totalUpload]) : 0;
-  const errorRate = totalRows > 0 ? (errorRows / totalRows) * 100 : null;
 
   return {
     errorRows,
-    totalRows,
-    actual:
-      errorUpload && totalUpload && errorRate != null
-        ? Math.max(0, Math.min(100, 100 - errorRate))
-        : null,
+    totalRows: 0,
+    actual: errorUpload ? errorRows : null,
   };
 }
 

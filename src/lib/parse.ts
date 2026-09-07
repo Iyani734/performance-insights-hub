@@ -232,6 +232,9 @@ function isCountableRow(record: Record<string, any>, row: any[], source: TicketQ
     return hasAnyNormalizedRecordValue(record, ["ticketid", "ticket", "ticketno", "job", "jobno"]) || rowHasAnyValue(row);
   }
 
+  const hasTicketNumber = hasAnyNormalizedRecordValue(record, ["ticketnumber", "ticketno", "ticketid"]);
+  if (hasTicketNumber) return true;
+
   return (
     hasAnyNormalizedRecordValue(record, ["name"]) &&
     hasAnyNormalizedRecordValue(record, ["ticketnumber", "infractiontype", "infractionsummary"])

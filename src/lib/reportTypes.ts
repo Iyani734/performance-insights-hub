@@ -22,7 +22,7 @@ export const REPORT_KINDS: { value: ReportKind; label: string; hint: string }[] 
   {
     value: "ticket_quality",
     label: "Ticket Quality",
-    hint: "Upload Ticket Quality Error and TCR Total. Both are required before the KPI calculates.",
+    hint: "Upload the Ticket Quality Error file. The KPI counts error rows in the selected date range.",
   },
   {
     value: "total_cycle_time",
@@ -62,9 +62,7 @@ export function identifyReportKindFromFileName(fileName: string): ReportKind | n
 
   if (
     hasAll(words, ["ticket", "quality"]) ||
-    hasAll(words, ["tcr", "total"]) ||
-    compact.includes("ticketquality") ||
-    compact.includes("tcrtotal")
+    compact.includes("ticketquality")
   ) {
     return "ticket_quality";
   }
@@ -89,7 +87,6 @@ export function identifyTicketQualitySourceFromFileName(fileName: string): Ticke
   const words = normalizedWords(fileName);
   const compact = words.join("");
 
-  if (hasAll(words, ["tcr", "total"]) || compact.includes("tcrtotal")) return "total";
   if (hasAll(words, ["ticket", "quality"]) || compact.includes("ticketquality")) return "errors";
   return null;
 }

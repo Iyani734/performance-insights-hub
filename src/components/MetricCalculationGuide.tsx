@@ -27,21 +27,11 @@ const METRICS: MetricDefinition[] = [
     label: "Ticket Quality",
     owner: "Dispatch/Drivers",
     cadence: "Monthly",
-    target: ">= 95%",
-    source: "Ticket Quality and TCR Total uploads. File names must include Ticket Quality or TCR Total.",
-    formula: "100 - (Ticket Quality error rows with Date of Occurrence inside the selected date range / TCR Total rows x 100).",
-    columns: ["Ticket Quality: Date of Occurance / Date of Occurrence", "TCR Total: data rows"],
-    note: "Higher is better. A 4% error rate displays as 96% ticket quality. The error file is date-aware, so changing the dashboard date range changes the numerator.",
-  },
-  {
-    label: "Quality Issues",
-    owner: "Dispatch/Drivers",
-    cadence: "Monthly",
-    target: "Supporting count",
-    source: "Ticket Quality upload. The file name must include Ticket Quality.",
+    target: "<= 10",
+    source: "Ticket Quality Error upload. The file name must include Ticket Quality.",
     formula: "Count imported Ticket Quality rows whose Date of Occurrence is inside the selected date range.",
-    columns: ["Ticket Quality: Date of Occurance / Date of Occurrence"],
-    note: "Rows without a usable occurrence date are skipped because they cannot be assigned to a date range.",
+    columns: ["Ticket Quality: Date of Occurance / Date of Occurrence", "Ticket Quality: Ticket Number"],
+    note: "Lower is better. TCR Total is no longer required. Error rows are identified by ticket number, so rows with a blank driver name still count when they have a usable date.",
   },
   {
     label: "Invoice Cycle Time (Final Edit to Invoice)",
@@ -70,9 +60,9 @@ const METRICS: MetricDefinition[] = [
     cadence: "Monthly",
     target: "<= 20",
     source: "Manual entry using Monday-Friday week ranges",
-    formula: "Saved safety count for each selected Monday-Friday week.",
+    formula: "Sum saved safety counts for every selected Monday-Friday week in the dashboard range.",
     columns: [],
-    note: "Record safety events, including speeding violations, against the selected Monday-Friday week. The range detail view shows the saved weeks.",
+    note: "Record safety events, including speeding violations, against the selected Monday-Friday week. The main dashboard card shows the selected-month total; the range detail view still shows each saved week.",
   },
   {
     label: "Incomplete Tickets",
@@ -80,9 +70,9 @@ const METRICS: MetricDefinition[] = [
     cadence: "Monthly",
     target: "<= 10",
     source: "Manual entry using Monday-Friday week ranges until the required fields are supplied",
-    formula: "Saved incomplete-ticket count for each selected Monday-Friday week.",
+    formula: "Sum saved incomplete-ticket counts for every selected Monday-Friday week in the dashboard range.",
     columns: ["Labour Time", "Internal Notes"],
-    note: "The current exports do not consistently provide these columns, so this is entered against the selected Monday-Friday week. The range detail view shows the saved weeks.",
+    note: "The current exports do not consistently provide these columns, so this is entered against the selected Monday-Friday week. The main dashboard card shows the selected-month total; the range detail view still shows each saved week.",
   },
   {
     label: "Missed Jobs / Late Jobs / Client Callbacks / Reworks",
@@ -129,7 +119,7 @@ export function MetricCalculationGuide() {
           </div>
           <p className="mt-2 text-sm text-muted-foreground">
             The file name determines the calculation. Use names containing active review final,
-            TicketQC REVIEW, TicketQC FINAL, Ticket Quality, TCR Total, invoice cycle time,
+            TicketQC REVIEW, TicketQC FINAL, Ticket Quality Error, invoice cycle time,
             total cycle time, or open jobs; the selected report type must match the file name.
             Active/Review/Final, Invoice Cycle Time, and Open Jobs are current snapshots with no
             upload date range, so a newer upload replaces the older snapshot.

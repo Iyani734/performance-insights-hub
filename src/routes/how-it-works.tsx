@@ -49,11 +49,11 @@ const METRICS: MetricSpec[] = [
   {
     key: "ticket_quality",
     label: "Ticket Quality",
-    target: ">= 95%",
-    source: "Ticket Quality and TCR Total exports. File names must include Ticket Quality or TCR Total.",
-    formula: "100 - (Ticket Quality error rows dated inside the selected range / TCR Total rows x 100)",
-    columns: ["Ticket Quality Date of Occurance / Date of Occurrence", "TCR Total data rows"],
-    why: "The dashboard displays the good-ticket percentage. If the dated error rows equal 4% of total tickets, the KPI displays 96%. It waits until both source files exist.",
+    target: "<= 10",
+    source: "Ticket Quality Error export. File name must include Ticket Quality.",
+    formula: "count Ticket Quality error rows dated inside the selected range",
+    columns: ["Ticket Quality Date of Occurance / Date of Occurrence", "Ticket Quality Ticket Number"],
+    why: "The dashboard displays the number of quality errors, not a percentage. TCR Total is no longer required. Error rows are identified by ticket number, so rows with a blank driver name still count when they have a usable date.",
   },
   {
     key: "dispatch_responsiveness",
@@ -69,18 +69,18 @@ const METRICS: MetricSpec[] = [
     label: "Safety",
     target: "<= 20",
     source: "Manual entry using Monday-Friday week ranges",
-    formula: "saved safety event count for each selected Monday-Friday week",
+    formula: "sum saved safety event counts for every selected Monday-Friday week",
     columns: [],
-    why: "Safety violations, including speeding violations, are tracked outside the TCR ticket export. Saving by work week prevents manual entries from being treated as daily uploads.",
+    why: "Safety violations, including speeding violations, are tracked outside the TCR ticket export. The dashboard card shows the selected-month total while range detail keeps the week-by-week audit trail.",
   },
   {
     key: "incomplete_tickets",
     label: "Incomplete Tickets",
     target: "<= 10",
     source: "Manual entry using Monday-Friday week ranges",
-    formula: "saved incomplete-ticket count for each selected Monday-Friday week",
+    formula: "sum saved incomplete-ticket counts for every selected Monday-Friday week",
     columns: ["Labor Time", "Internal Notes"],
-    why: "The current TCR ticket export does not consistently include every field needed to detect incomplete tickets automatically, so the range detail view is the audit trail for each saved week.",
+    why: "The current TCR ticket export does not consistently include every field needed to detect incomplete tickets automatically. The dashboard card shows the selected-month total while range detail keeps the week-by-week audit trail.",
   },
   {
     key: "missed_jobs",
@@ -133,7 +133,7 @@ function HowItWorks() {
             <div className="font-medium">1. Upload the exports</div>
             <p className="text-sm text-muted-foreground mt-1">
               Use file names containing active review final, TicketQC REVIEW, TicketQC FINAL,
-              Ticket Quality, TCR Total, invoice cycle time, total cycle time, or open jobs so rows go into the right calculation group.
+              Ticket Quality Error, invoice cycle time, total cycle time, or open jobs so rows go into the right calculation group.
             </p>
           </Card>
           <Card className="p-5">
@@ -192,7 +192,7 @@ function HowItWorks() {
                   Ticket QC uses TicketQC FINAL rows divided by TicketQC REVIEW rows
                 </li>
                 <li>
-                  Ticket Quality uses 100 minus dated Ticket Quality error rows divided by TCR Total rows
+                  Ticket Quality counts dated Ticket Quality error rows by ticket number
                 </li>
               </ul>
             </div>

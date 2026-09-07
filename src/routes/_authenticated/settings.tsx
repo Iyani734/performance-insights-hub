@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { useAuth, DEFAULT_PAGES } from "@/lib/useAuth";
-import { normalizeKpiTargets, type KpiTarget } from "@/lib/kpi";
+import { deriveTargetDisplay, normalizeKpiTarget, normalizeKpiTargets, type KpiTarget } from "@/lib/kpi";
 import { useState, useEffect, useMemo } from "react";
 import { Link, Navigate, Outlet, useLocation } from "@tanstack/react-router";
 import { Check, X, ShieldCheck, PencilLine, Send, Clock, CheckCircle2, XCircle, Eye, Edit3, BookOpen, LockKeyhole, UnlockKeyhole, ClipboardList } from "lucide-react";
@@ -140,11 +140,12 @@ function SettingsPage() {
 
   const save = useMutation({
     mutationFn: async (t: KpiTarget) => {
+      const normalized = normalizeKpiTarget(t);
       const patch = {
-        label: t.label, owner: t.owner, cadence: t.cadence,
-        unit: t.unit,
-        green_min: t.green_min, yellow_min: t.yellow_min,
-        target_display: t.target_display, direction: t.direction,
+        label: normalized.label, owner: normalized.owner, cadence: normalized.cadence,
+        unit: normalized.unit,
+        green_min: normalized.green_min, yellow_min: normalized.yellow_min,
+        target_display: normalized.target_display, direction: normalized.direction,
       };
       if (isSuperAdmin) {
         const { error } = await supabase.from("kpi_targets").update(patch).eq("id", t.id);
@@ -153,9 +154,9 @@ function SettingsPage() {
           action: "kpi_target_updated",
           entityType: "kpi_target",
           entityId: t.id,
-          summary: `Updated KPI target "${t.label}"`,
-          metadata: { kpi_key: t.kpi_key, changes: patch },
-        });
+        summary: `Updated KPI target "${normalized.label}"`,
+        metadata: { kpi_key: t.kpi_key, changes: patch },
+      });
         return { direct: true };
       }
       // Non-super-admin: submit for approval
@@ -164,7 +165,7 @@ function SettingsPage() {
         requested_by_name: user!.email,
         target_table: "kpi_targets",
         target_id: t.id,
-        summary: `Update KPI "${t.label}"`,
+        summary: `Update KPI "${normalized.label}"`,
         changes: patch,
       });
       if (error) throw error;
@@ -172,7 +173,7 @@ function SettingsPage() {
         action: "edit_request_created",
         entityType: "edit_request",
         entityId: t.id,
-        summary: `Submitted KPI target update request for "${t.label}"`,
+        summary: `Submitted KPI target update request for "${normalized.label}"`,
         metadata: { kpi_key: t.kpi_key, changes: patch },
       });
       return { direct: false };
@@ -432,22 +433,30 @@ function SettingsPage() {
           )}
         </div>
         <div className="divide-y">
-          {Object.values(drafts).map((t) => (
-            <div key={t.id} className="p-6 grid md:grid-cols-6 gap-3 items-end">
-              <div className="md:col-span-2 space-y-1.5">
-                <Label>Metric</Label>
-                <Input disabled={!canEditKpis} value={t.label} onChange={(e) => setDrafts({ ...drafts, [t.id]: { ...t, label: e.target.value } })} />
+          {Object.values(drafts).map((t) => {
+            const normalized = normalizeKpiTarget(t);
+            return (
+              <div key={t.id} className="p-6 grid md:grid-cols-5 gap-3 items-end">
+                <div className="md:col-span-2 space-y-1.5">
+                  <Label>Metric</Label>
+                  <Input disabled={!canEditKpis} value={t.label} onChange={(e) => setDrafts({ ...drafts, [t.id]: { ...t, label: e.target.value } })} />
+                </div>
+                <div className="space-y-1.5"><Label>Owner</Label><Input disabled={!canEditKpis} value={t.owner ?? ""} onChange={(e) => setDrafts({ ...drafts, [t.id]: { ...t, owner: e.target.value } })} /></div>
+                <div className="space-y-1.5">
+                  <Label>Target</Label>
+                  <Input disabled={!canEditKpis} type="number" value={t.green_min} onChange={(e) => setDrafts({ ...drafts, [t.id]: { ...t, green_min: Number(e.target.value) } })} />
+                  <p className="text-[11px] text-muted-foreground">
+                    Displays as {deriveTargetDisplay(normalized)}. Yellow/red thresholds are calculated automatically.
+                  </p>
+                </div>
+                <div>
+                  <Button onClick={() => save.mutate(t)} disabled={save.isPending || !canEditKpis}>
+                    {isSuperAdmin ? "Save" : <><Send className="w-3.5 h-3.5 mr-1" />Request</>}
+                  </Button>
+                </div>
               </div>
-              <div className="space-y-1.5"><Label>Owner</Label><Input disabled={!canEditKpis} value={t.owner ?? ""} onChange={(e) => setDrafts({ ...drafts, [t.id]: { ...t, owner: e.target.value } })} /></div>
-              <div className="space-y-1.5"><Label>Green ≥/≤</Label><Input disabled={!canEditKpis} type="number" value={t.green_min} onChange={(e) => setDrafts({ ...drafts, [t.id]: { ...t, green_min: Number(e.target.value) } })} /></div>
-              <div className="space-y-1.5"><Label>Yellow ≥/≤</Label><Input disabled={!canEditKpis} type="number" value={t.yellow_min} onChange={(e) => setDrafts({ ...drafts, [t.id]: { ...t, yellow_min: Number(e.target.value) } })} /></div>
-              <div>
-                <Button onClick={() => save.mutate(t)} disabled={save.isPending || !canEditKpis}>
-                  {isSuperAdmin ? "Save" : <><Send className="w-3.5 h-3.5 mr-1" />Request</>}
-                </Button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </Card>
 

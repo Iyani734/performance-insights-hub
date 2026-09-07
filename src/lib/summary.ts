@@ -8,6 +8,15 @@ export type KpiRow = {
   status: KpiStatus;
 };
 
+const SCORE_KPI_KEYS = new Set([
+  "invoice_cycle_time",
+  "review_to_final_edit",
+  "ticket_quality",
+  "dispatch_responsiveness",
+  "driver_safety",
+  "incomplete_tickets",
+]);
+
 export function buildRows(targets: KpiTarget[], current: Record<string, number | null>, previous: Record<string, number | null>): KpiRow[] {
   return targets.map(t => {
     const target = normalizeKpiTarget(t);
@@ -21,17 +30,44 @@ export function buildRows(targets: KpiTarget[], current: Record<string, number |
   });
 }
 
-// Overall score: for each KPI with a value, award 100 (green), 60 (yellow), 20 (red)
+// Overall score: average capped attainment for the six core score KPIs.
+// - Higher-is-better: actual ÷ target
+// - Lower-is-better: target ÷ actual
+// Each KPI is capped at 100% before averaging, so exceeding target cannot
+// offset a missed KPI.
 export function overallScore(rows: KpiRow[]): { score: number | null; counts: Record<KpiStatus, number> } {
   const counts: Record<KpiStatus, number> = { green: 0, yellow: 0, red: 0, none: 0 };
   let total = 0, weight = 0;
   for (const r of rows) {
     counts[r.status]++;
-    if (r.status === "none") continue;
+    if (!SCORE_KPI_KEYS.has(r.target.kpi_key)) continue;
+    const attainment = attainmentScore(r);
+    if (attainment == null) continue;
     weight++;
-    total += r.status === "green" ? 100 : r.status === "yellow" ? 60 : 20;
+    total += attainment;
   }
   return { score: weight ? Math.round(total / weight) : null, counts };
+}
+
+function attainmentScore(row: KpiRow): number | null {
+  const actual = row.actual == null ? null : Number(row.actual);
+  const target = Number(row.target.green_min);
+
+  if (actual == null || Number.isNaN(actual) || Number.isNaN(target)) return null;
+  if (actual < 0 || target < 0) return null;
+
+  if (row.target.direction === "higher_is_better") {
+    if (target === 0) return actual === 0 ? 100 : 100;
+    return clampAttainment((actual / target) * 100);
+  }
+
+  if (actual === 0) return 100;
+  return clampAttainment((target / actual) * 100);
+}
+
+function clampAttainment(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, value));
 }
 
 export function deltaPct(actual: number | null, previous: number | null): number | null {

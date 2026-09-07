@@ -16,7 +16,6 @@ import { z } from "zod";
 import { useDemoMode } from "@/lib/demoMode";
 import { DEMO_CURRENT_WEEK, demoCustomers, demoOpenJobs } from "@/lib/demoData";
 import { isSeededDemoEmail } from "@/lib/liveData";
-import { deleteCustomer, upsertCustomer } from "@/lib/customersServer";
 import { fetchLatestOpenJobsRows } from "@/lib/openJobsData";
 
 export const Route = createFileRoute("/_authenticated/customers")({ component: CustomersPage });
@@ -111,6 +110,7 @@ function CustomersPage() {
 
   const save = useMutation({
     mutationFn: async () => {
+      if (!canManageCustomers) throw new Error("You do not have edit access for customers.");
       const parsed = schema.safeParse(form);
       if (!parsed.success) throw new Error(parsed.error.issues[0].message);
       const payload = {
@@ -120,43 +120,49 @@ function CustomersPage() {
         cc_emails: form.cc,
         last_email_sent_at: form.lastEmail ? new Date(form.lastEmail).toISOString() : null,
         enabled: form.enabled,
+        active: form.enabled,
         updated_at: new Date().toISOString(),
       };
-      await upsertCustomer({
-        data: {
-          id: editing && !editing.derived_from_open_jobs ? editing.id : undefined,
-          customer: payload,
-        },
-      });
+      const query = editing && !editing.derived_from_open_jobs
+        ? supabase.from("customers").update(payload).eq("id", editing.id)
+        : supabase.from("customers").upsert(payload, { onConflict: "key" });
+      const { error } = await query;
+      if (error) throw error;
     },
     onSuccess: () => { toast.success("Saved"); setOpen(false); setEditing(null); setForm(empty); qc.invalidateQueries({ queryKey: ["customers"] }); qc.invalidateQueries({ queryKey: ["customers_from_open_jobs"] }); },
     onError: (e: any) => toast.error(e.message),
   });
 
   const del = useMutation({
-    mutationFn: async (id: string) => { await deleteCustomer({ data: { id } }); },
+    mutationFn: async (id: string) => {
+      if (!canManageCustomers) throw new Error("You do not have edit access for customers.");
+      const { error } = await supabase.from("customers").delete().eq("id", id);
+      if (error) throw error;
+    },
     onSuccess: () => { toast.success("Deleted"); qc.invalidateQueries({ queryKey: ["customers"] }); },
     onError: (e: any) => toast.error(e.message),
   });
 
   const toggleEnabled = useMutation({
     mutationFn: async ({ customer, enabled }: { customer: any; enabled: boolean }) => {
+      if (!canManageCustomers) throw new Error("You do not have edit access for customers.");
       const payload = {
         key: customer.key,
         name: customer.name,
         email: customer.email ?? null,
         cc_emails: customer.cc_emails ?? [],
         enabled,
+        active: enabled,
         updated_at: new Date().toISOString(),
       };
-      await upsertCustomer({
-        data: {
-          id: customer.derived_from_open_jobs ? undefined : customer.id,
-          customer: payload,
-        },
-      });
+      const query = customer.derived_from_open_jobs
+        ? supabase.from("customers").upsert(payload, { onConflict: "key" })
+        : supabase.from("customers").update(payload).eq("id", customer.id);
+      const { error } = await query;
+      if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["customers"] }); qc.invalidateQueries({ queryKey: ["customers_from_open_jobs"] }); },
+    onError: (e: any) => toast.error(e.message),
   });
 
   function edit(c: any) {

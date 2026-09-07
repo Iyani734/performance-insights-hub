@@ -71,11 +71,11 @@ export const DEMO_TARGETS: KpiTarget[] = [
     label: "Ticket Quality",
     owner: "Dispatch/Drivers",
     cadence: "Monthly",
-    unit: "%",
-    direction: "higher_is_better",
-    green_min: 95,
-    yellow_min: 90,
-    target_display: ">= 95%",
+    unit: "count",
+    direction: "lower_is_better",
+    green_min: 10,
+    yellow_min: 10,
+    target_display: "<= 10",
     auto: true,
     sort_order: 2,
   },
@@ -153,7 +153,7 @@ export const DEMO_TARGETS: KpiTarget[] = [
 
 const DEMO_SERIES: Record<string, number[]> = {
   review_to_final_edit: [96.8, 96.2, 95.6, 95.1],
-  ticket_quality: [98.9, 98.7, 98.5, 98.2],
+  ticket_quality: [2, 3, 4, 5],
   invoice_cycle_time: [2.0, 2.2, 2.4, 2.7],
   dispatch_responsiveness: [97.8, 97.2, 96.8, 96.1],
   driver_safety: [12, 14, 16, 18],
@@ -333,6 +333,10 @@ function average(values: number[]) {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 }
 
+function sum(values: number[]) {
+  return values.length ? values.reduce((total, value) => total + value, 0) : null;
+}
+
 function generatedDemoAutoKpisForRange(range: DateRangeValue) {
   const weeks = DEMO_WEEKS.filter((week) =>
     rangeOverlaps(week, addDays(week, 6), range.from, range.to),
@@ -340,7 +344,7 @@ function generatedDemoAutoKpisForRange(range: DateRangeValue) {
   const indices = weeks.map((week) => DEMO_WEEKS.indexOf(week)).filter((index) => index >= 0);
   return {
     review_to_final_edit: average(indices.map((index) => DEMO_SERIES.review_to_final_edit[index])),
-    ticket_quality: average(indices.map((index) => DEMO_SERIES.ticket_quality[index])),
+    ticket_quality: sum(indices.map((index) => DEMO_SERIES.ticket_quality[index])),
     invoice_cycle_time: average(indices.map((index) => DEMO_SERIES.invoice_cycle_time[index])),
     dispatch_completion: null,
     totals: indices.reduce(
@@ -397,14 +401,7 @@ function localDemoAutoKpisForRange(range: DateRangeValue) {
       totals.invoiceCycleDaysTotal += m.invoiceCycleDaysTotal ?? 0;
       totals.invoiceCycleCount += m.invoiceCycleCount ?? 0;
       const reviewValue = m.reviewToFinalEdit ?? null;
-      const qualityValue =
-        m.ticketQuality ??
-        (m.qualityTotalTickets != null && m.qualityTotalTickets > 0 && m.qualityIssues != null
-          ? 100 - ((m.qualityIssues ?? 0) / m.qualityTotalTickets) * 100
-          : null) ??
-        (m.invoiced != null && m.invoiced > 0 && m.invoiceQualityIssues != null
-          ? 100 - ((m.invoiceQualityIssues ?? 0) / m.invoiced) * 100
-          : null);
+      const qualityValue = m.ticketQuality ?? m.qualityIssues ?? null;
       const invoiceCycleValue =
         m.invoiceCycleTime ??
         ((m.invoiceCycleCount ?? 0) > 0
@@ -418,7 +415,7 @@ function localDemoAutoKpisForRange(range: DateRangeValue) {
         totals.invoiceCycleValues.push(invoiceCycleValue);
       totals.hasTickets = totals.hasTickets || m.tickets != null;
       totals.hasInvoiced = totals.hasInvoiced || m.invoiced != null;
-      totals.hasQualitySource = totals.hasQualitySource || m.qualityIssues != null || m.qualityTotalTickets != null;
+      totals.hasQualitySource = totals.hasQualitySource || m.qualityIssues != null || m.ticketQuality != null;
       return totals;
     },
     {
@@ -451,7 +448,7 @@ function localDemoAutoKpisForRange(range: DateRangeValue) {
       metrics.qcReviewTickets > 0 && metrics.qcFinalTickets > 0
         ? (metrics.qcFinalTickets / metrics.qcReviewTickets) * 100
         : average(metrics.reviewValues),
-    ticket_quality: average(metrics.qualityValues),
+    ticket_quality: metrics.hasQualitySource ? metrics.qualityIssues : average(metrics.qualityValues),
     invoice_cycle_time: average(metrics.invoiceCycleValues),
     dispatch_completion:
       metrics.hasTickets && metrics.tickets > 0
@@ -557,19 +554,12 @@ export function demoKpiValuesWithLocal() {
         created_at,
       });
     }
-    if (
-      ((m.invoiced != null && m.invoiced > 0 && (m.ticketQuality != null || m.invoiceQualityIssues != null)) ||
-        (m.qualityTotalTickets != null && m.qualityTotalTickets > 0 && m.qualityIssues != null))
-    ) {
+    if (m.ticketQuality != null || m.qualityIssues != null) {
       rows.push({
         id: `${upload.id}-quality`,
         kpi_key: "ticket_quality",
         week_start,
-        actual:
-          m.ticketQuality ??
-          (m.qualityTotalTickets != null && m.qualityTotalTickets > 0 && m.qualityIssues != null
-            ? 100 - ((m.qualityIssues ?? 0) / m.qualityTotalTickets) * 100
-            : 100 - ((m.invoiceQualityIssues ?? 0) / (m.invoiced ?? 1)) * 100),
+        actual: m.ticketQuality ?? m.qualityIssues ?? null,
         source: "demo-upload",
         entered_by: null,
         created_at,
