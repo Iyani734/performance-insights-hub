@@ -891,7 +891,7 @@ function Dashboard() {
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-3xl font-semibold">Performance Dashboard</h1>
-          <p className="text-sm text-muted-foreground mt-1">Operational KPIs across dispatch, quality, and billing.</p>
+          <p className="text-sm text-muted-foreground mt-1">Operational KPIs - Dispatch, Quality, Finance Ops</p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
           <div className="space-y-1">
@@ -961,7 +961,6 @@ function Dashboard() {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="font-display text-lg font-semibold">Operational Summary</h2>
-            <p className="text-xs text-muted-foreground">Status, trend and commentary per KPI</p>
           </div>
         </div>
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1081,7 +1080,7 @@ function Dashboard() {
         <Card className="p-6">
           <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h3 className="font-display text-base font-semibold">Percentage KPI Trends</h3>
+              <h3 className="font-display text-base font-semibold">KPI Trends</h3>
               <p className="text-xs text-muted-foreground mt-1">
                 Tickets QC'd and Team Responsiveness for {monthDisplayLabel(trendMonth)}.
               </p>
@@ -1145,7 +1144,7 @@ function Dashboard() {
         </Card>
         <Card className="p-6">
           <div className="mb-4">
-            <h3 className="font-display text-base font-semibold">Number & Time KPI Trends</h3>
+            <h3 className="font-display text-base font-semibold">KPI Trends</h3>
             <p className="text-xs text-muted-foreground mt-1">
               Invoice Cycle Time, Ticket Quality errors, Safety, Incomplete Tickets, and Missed Jobs for {monthDisplayLabel(trendMonth)}.
             </p>
