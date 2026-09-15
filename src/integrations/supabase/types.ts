@@ -415,6 +415,7 @@ export type Database = {
           file_name: string | null
           file_path: string | null
           id: string
+          invoice_cycle_exclude_from: string | null
           kind: Database["public"]["Enums"]["report_kind"]
           processing_ms: number | null
           row_count: number | null
@@ -432,6 +433,7 @@ export type Database = {
           file_name?: string | null
           file_path?: string | null
           id?: string
+          invoice_cycle_exclude_from?: string | null
           kind: Database["public"]["Enums"]["report_kind"]
           processing_ms?: number | null
           row_count?: number | null
@@ -449,6 +451,7 @@ export type Database = {
           file_name?: string | null
           file_path?: string | null
           id?: string
+          invoice_cycle_exclude_from?: string | null
           kind?: Database["public"]["Enums"]["report_kind"]
           processing_ms?: number | null
           row_count?: number | null

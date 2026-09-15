@@ -27,7 +27,7 @@ export const REPORT_KINDS: { value: ReportKind; label: string; hint: string }[] 
   {
     value: "total_cycle_time",
     label: "Invoice Cycle Time",
-    hint: "File name must include invoice cycle time or total cycle time. This is always a timeless current snapshot.",
+    hint: "File name must include invoice cycle time or total cycle time. Optionally exclude tickets from a selected date onward.",
   },
   {
     value: "open_jobs",

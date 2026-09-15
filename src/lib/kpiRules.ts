@@ -152,9 +152,23 @@ export function calculateInvoiceCycleTime(tickets: TicketLike[], effectiveToIso:
   return businessDaysBetween(oldestDeliverPickup, effectiveTo);
 }
 
-export function calculateTotalCycleTime(tickets: TicketLike[], throughDate = new Date()) {
-  const oldestDeliverPickup = oldestDeliverPickupDate(tickets);
+/**
+ * When review is paused, exclude tickets dated on or after the selected day
+ * and stop the age calculation on the preceding day.
+ */
+export function calculateTotalCycleTime(tickets: TicketLike[], excludeFromIso?: string | null) {
+  const excludeFrom = excludeFromIso ? toDate(`${excludeFromIso}T00:00:00Z`) : null;
+  const includedTickets = excludeFrom
+    ? tickets.filter((row) => {
+        const deliverPickup = deliverPickupDateFromRow(row);
+        return !deliverPickup || startOfUtcDay(deliverPickup) < startOfUtcDay(excludeFrom);
+      })
+    : tickets;
+  const oldestDeliverPickup = oldestDeliverPickupDate(includedTickets);
   if (!oldestDeliverPickup) return null;
+  const throughDate = excludeFrom
+    ? new Date(startOfUtcDay(excludeFrom).getTime() - 24 * 60 * 60 * 1000)
+    : new Date();
   return businessDaysBetween(oldestDeliverPickup, throughDate);
 }
 

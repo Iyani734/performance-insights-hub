@@ -80,6 +80,14 @@ const DEMO_UPLOADERS = ["Ian", "Yvette"];
 const INSERT_CONCURRENCY = 3;
 type UploadTiming = "timeless" | "range";
 
+function isMissingInvoiceCycleExclusionColumn(error: unknown) {
+  const message =
+    error && typeof error === "object" && "message" in error
+      ? String((error as { message?: unknown }).message ?? "")
+      : String(error ?? "");
+  return message.includes("invoice_cycle_exclude_from") && /schema cache|could not find/i.test(message);
+}
+
 function isExcelFile(file: File) {
   return /\.(xlsx|xls)$/i.test(file.name);
 }
@@ -216,6 +224,7 @@ function buildDemoUploadMetrics(
   _effectiveFrom: string,
   _effectiveTo: string,
   fileName: string,
+  invoiceCycleExcludeFrom?: string | null,
 ): DemoUploadMetrics | undefined {
   if (kind === "open_jobs") return undefined;
   if (kind === "active_review_final") {
@@ -249,7 +258,7 @@ function buildDemoUploadMetrics(
   }
   return {
     invoiced: rows.length,
-    invoiceCycleTime: calculateTotalCycleTime(rows),
+    invoiceCycleTime: calculateTotalCycleTime(rows, invoiceCycleExcludeFrom),
   };
 }
 
@@ -257,8 +266,10 @@ function uploadAppliesTo(upload: any) {
   const from = upload.effective_from ?? upload.week_start;
   const to = upload.effective_to ?? upload.week_start;
   if (!from) return "Unknown";
-  if (!to || to === from) return formatWeek(from);
-  return `${formatWeek(from)} - ${formatWeek(to)}`;
+  const range = !to || to === from ? formatWeek(from) : `${formatWeek(from)} - ${formatWeek(to)}`;
+  return upload.invoice_cycle_exclude_from
+    ? `${range} - before ${formatWeek(upload.invoice_cycle_exclude_from)}`
+    : range;
 }
 
 function UploadsPage() {
@@ -273,6 +284,7 @@ function UploadsPage() {
   const [uploadTiming, setUploadTiming] = useState<UploadTiming>("timeless");
   const [effectiveFrom, setEffectiveFrom] = useState<string>(currentWorkingRange.from);
   const [effectiveTo, setEffectiveTo] = useState<string>(currentWorkingRange.to);
+  const [invoiceCycleExcludeFrom, setInvoiceCycleExcludeFrom] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [demoUploadedRows, setDemoUploadedRows] =
@@ -407,6 +419,10 @@ function UploadsPage() {
               week_start: uploadBucket,
               effective_from: uploadEffectiveFrom,
               effective_to: uploadEffectiveTo,
+              invoice_cycle_exclude_from:
+                kind === "total_cycle_time" && invoiceCycleExcludeFrom
+                  ? invoiceCycleExcludeFrom
+                  : null,
               file_name: selectedFile.name,
               file_path: null,
               row_count: parsed.stats.imported,
@@ -417,7 +433,14 @@ function UploadsPage() {
               processing_ms: dt,
               error_details: parsed.stats.error_details,
               status: parsed.stats.errors > 0 ? "partial" : "success",
-              metrics: buildDemoUploadMetrics(kind, parsed.rows, uploadEffectiveFrom, uploadEffectiveTo, selectedFile.name),
+              metrics: buildDemoUploadMetrics(
+                kind,
+                parsed.rows,
+                uploadEffectiveFrom,
+                uploadEffectiveTo,
+                selectedFile.name,
+                invoiceCycleExcludeFrom || null,
+              ),
             } satisfies DemoUploadRecord,
             customerSyncWarning: null,
             ticketQcWaiting: false,
@@ -450,23 +473,32 @@ function UploadsPage() {
         const { error: storageError } = await storageUpload;
         if (storageError)
           throw new Error(`Could not store the original file: ${storageError.message}`);
+        const uploadRecord = {
+          kind: kind as any,
+          week_start: uploadBucket,
+          file_name: selectedFile.name,
+          uploaded_by: user.id,
+          row_count: 0,
+          status: "processing",
+          file_path: filePath,
+          effective_from: uploadEffectiveFrom,
+          effective_to: uploadEffectiveTo,
+          ...(kind === "total_cycle_time" && invoiceCycleExcludeFrom
+            ? { invoice_cycle_exclude_from: invoiceCycleExcludeFrom }
+            : {}),
+        };
         const { data: up, error: reportError } = await supabase
           .from("report_uploads")
-          .insert({
-            kind: kind as any,
-            week_start: uploadBucket,
-            file_name: selectedFile.name,
-            uploaded_by: user.id,
-            row_count: 0,
-            status: "processing",
-            file_path: filePath,
-            effective_from: uploadEffectiveFrom,
-            effective_to: uploadEffectiveTo,
-          } as any)
+          .insert(uploadRecord as any)
           .select()
           .single();
         if (reportError || !up) {
           await supabase.storage.from("report-files").remove([filePath]);
+          if (invoiceCycleExcludeFrom && isMissingInvoiceCycleExclusionColumn(reportError)) {
+            throw new Error(
+              "The Invoice Cycle Time cut-off date needs the pending database migration before it can be used. Upload without a cut-off date for now.",
+            );
+          }
           throw reportError ?? new Error("Could not create the upload record.");
         }
 
@@ -799,6 +831,7 @@ function UploadsPage() {
               value={kind}
               onValueChange={(v: any) => {
                 setKind(v);
+                setInvoiceCycleExcludeFrom("");
                 setFiles([]);
                 setFileInputKey((value) => value + 1);
               }}
@@ -854,6 +887,20 @@ function UploadsPage() {
                 />
               </div>
             </>
+          )}
+          {kind === "total_cycle_time" && (
+            <div className="space-y-2">
+              <Label htmlFor="invoice-cycle-exclude-from">Exclude tickets from</Label>
+              <Input
+                id="invoice-cycle-exclude-from"
+                type="date"
+                value={invoiceCycleExcludeFrom}
+                onChange={(e) => setInvoiceCycleExcludeFrom(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Optional. Tickets with a Deliver/Pickup date on or after this date are excluded.
+              </p>
+            </div>
           )}
           <div className="space-y-2 md:col-span-3">
             <Label>File (.xlsx / .xls)</Label>

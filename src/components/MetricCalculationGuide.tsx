@@ -40,9 +40,9 @@ const METRICS: MetricDefinition[] = [
     target: "<= 3 days",
     source: "Invoice Cycle Time uploads. The file name must include invoice cycle time or total cycle time.",
     formula:
-      "Business days from the oldest Deliver/Pickup date in the file to today, excluding weekends.",
+      "Business days from the oldest included Deliver/Pickup date to today, or to the day before an optional exclude-from date, excluding weekends.",
     columns: ["Column J: Deliver/Pickup"],
-    note: "This is a current snapshot with no upload date range. The newest Invoice Cycle Time upload replaces older snapshots, then the app sorts Deliver/Pickup dates from oldest to newest and counts business days through the current day.",
+    note: "This is a current snapshot. When uploading, an optional exclude-from date omits tickets dated on or after that day and stops the calculation on the preceding day. The newest Invoice Cycle Time upload replaces older snapshots.",
   },
   {
     label: "Team Responsiveness (within 1 hour)",
@@ -121,8 +121,8 @@ export function MetricCalculationGuide() {
             The file name determines the calculation. Use names containing active review final,
             TicketQC REVIEW, TicketQC FINAL, Ticket Quality Error, invoice cycle time,
             total cycle time, or open jobs; the selected report type must match the file name.
-            Active/Review/Final, Invoice Cycle Time, and Open Jobs are current snapshots with no
-            upload date range, so a newer upload replaces the older snapshot.
+            Active/Review/Final, Invoice Cycle Time, and Open Jobs are current snapshots, so a newer
+            upload replaces the older snapshot. Invoice Cycle Time can also exclude tickets from a selected date onward.
           </p>
         </div>
       </section>

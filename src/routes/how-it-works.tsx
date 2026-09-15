@@ -33,9 +33,9 @@ const METRICS: MetricSpec[] = [
     label: "Invoice Cycle Time (Final Edit to Invoice)",
     target: "<= 3 days",
     source: "Invoice Cycle Time export. The file name must include invoice cycle time or total cycle time.",
-    formula: "business days from the oldest Deliver/Pickup date to today, excluding weekends",
+    formula: "business days from the oldest included Deliver/Pickup date to today, or to the day before an optional exclude-from date, excluding weekends",
     columns: ["Column J: Deliver/Pickup"],
-    why: "This is a current snapshot, so no upload date range is needed. The newest Invoice Cycle Time upload replaces older snapshots, then the app sorts Deliver/Pickup dates from oldest to newest and counts business days through the current day.",
+    why: "This is a current snapshot. An optional exclude-from date omits tickets dated on or after that day and stops the calculation on the preceding day. The newest Invoice Cycle Time upload replaces older snapshots.",
   },
   {
     key: "review_to_final_edit",
@@ -141,7 +141,7 @@ function HowItWorks() {
             <div className="font-medium">2. Automatic KPIs run</div>
             <p className="text-sm text-muted-foreground mt-1">
               Date-based KPIs use the selected From and To dates. Active/Review/Final and Invoice
-              Cycle Time are current snapshots, so the newest upload becomes the displayed value.
+              Cycle Time are current snapshots, so the newest upload becomes the displayed value. Invoice Cycle Time can exclude tickets from a selected date onward.
             </p>
           </Card>
           <Card className="p-5">

@@ -180,7 +180,10 @@ export async function computeAutoKpisForRange(from: string, to: string) {
   const statusMatches = (status: unknown, value: string) => normalizeTicketStatus(status) === value;
   const ticketQc = calculateTicketQcReviewToFinal(qcUploads);
   const ticketQuality = calculateTicketQualityFromUploads(qualityUploads, qualityErrorRows.length);
-  const totalCycleTime = calculateTotalCycleTime(cycleRows);
+  const totalCycleTime = calculateTotalCycleTime(
+    cycleRows,
+    cycleUpload?.invoice_cycle_exclude_from,
+  );
 
   return {
     review_to_final_edit: ticketQc.actual,
@@ -212,18 +215,41 @@ type UploadLike = {
   week_start: string;
   effective_from: string | null;
   effective_to: string | null;
+  invoice_cycle_exclude_from: string | null;
   status: string | null;
   created_at: string | null;
 };
 
+function isMissingInvoiceCycleExclusionColumn(error: unknown) {
+  const message =
+    error && typeof error === "object" && "message" in error
+      ? String((error as { message?: unknown }).message ?? "")
+      : String(error ?? "");
+  return message.includes("invoice_cycle_exclude_from") && /schema cache|could not find/i.test(message);
+}
+
 async function fetchAvailableUploads(): Promise<UploadLike[]> {
-  const data = await fetchAllSupabaseRows<UploadLike>((rangeFrom, rangeTo) =>
-    supabase
-      .from("report_uploads")
-      .select("id,kind,file_name,row_count,week_start,effective_from,effective_to,status,created_at")
-      .order("created_at", { ascending: false })
-      .range(rangeFrom, rangeTo),
-  );
+  let data: UploadLike[];
+  try {
+    data = await fetchAllSupabaseRows<UploadLike>((rangeFrom, rangeTo) =>
+      supabase
+        .from("report_uploads")
+        .select("id,kind,file_name,row_count,week_start,effective_from,effective_to,invoice_cycle_exclude_from,status,created_at")
+        .order("created_at", { ascending: false })
+        .range(rangeFrom, rangeTo),
+    );
+  } catch (error) {
+    if (!isMissingInvoiceCycleExclusionColumn(error)) throw error;
+    const legacyUploads = await fetchAllSupabaseRows<Omit<UploadLike, "invoice_cycle_exclude_from">>(
+      (rangeFrom, rangeTo) =>
+        supabase
+          .from("report_uploads")
+          .select("id,kind,file_name,row_count,week_start,effective_from,effective_to,status,created_at")
+          .order("created_at", { ascending: false })
+          .range(rangeFrom, rangeTo),
+    );
+    data = legacyUploads.map((upload) => ({ ...upload, invoice_cycle_exclude_from: null }));
+  }
 
   return data.filter((upload) => {
     if (isSeededDemoUpload(upload.file_name)) return false;

@@ -190,6 +190,7 @@ export type DemoUploadRecord = {
   week_start: string;
   effective_from?: string | null;
   effective_to?: string | null;
+  invoice_cycle_exclude_from?: string | null;
   file_name: string;
   file_path: string | null;
   row_count: number;
