@@ -40,6 +40,7 @@ import {
   parseTicketsSheet,
   parseOpenJobsSheet,
   parseTicketQualityCountSheet,
+  dateOnlyToUtcTimestamp,
   type ParseStats,
 } from "@/lib/parse";
 import { canEdit, useAuth } from "@/lib/useAuth";
@@ -540,7 +541,7 @@ function UploadsPage() {
                 upload_id: up.id,
                 week_start: uploadBucket,
                 kind: "tickets",
-                date_recv: r.occurrence_date,
+                date_recv: dateOnlyToUtcTimestamp(r.occurrence_date),
                 raw: { ...r.raw, source_type: "ticket_quality_error" },
               }));
               setUploadStage(`Importing ${payload.length} quality error rows from ${selectedFile.name}...`);

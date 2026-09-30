@@ -54,6 +54,11 @@ export function toISODate(v: any): string | null {
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+export function dateOnlyToUtcTimestamp(isoDate: string | null | undefined): string | null {
+  if (!isoDate || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return null;
+  return `${isoDate}T00:00:00.000Z`;
+}
+
 function s(v: any): string | undefined {
   if (v == null) return undefined;
   const str = String(v).trim();
